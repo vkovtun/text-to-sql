@@ -82,12 +82,14 @@ You need a valid Hugging Face Token to publish your model. If you are running in
 from pathlib import Path
 from typing import Any
 from functools import lru_cache
+from datetime import datetime
 import json
 import re
 import sqlite3
 from datasets import Dataset, DatasetDict, load_dataset
 
 import torch
+import wandb
 from transformers import AutoProcessor, AutoModelForMultimodalLM, BitsAndBytesConfig
 from peft import prepare_model_for_kbit_training
 
@@ -104,6 +106,21 @@ load_dotenv()
 
 hf_token = os.environ["HF_TOKEN"]
 login(hf_token, add_to_git_credential=True)
+
+# Run identity, shared between the Hub repo name and the W&B run
+PROJECT_NAME = "gemma-text-to-sql"
+RUN_NAME = f"{datetime.now():%Y-%m-%d_%H.%M.%S}"
+PROJECT_RUN_NAME = f"{PROJECT_NAME}-{RUN_NAME}"
+
+# Log in to Weights & Biases
+wandb.login(key=os.environ["WANDB_API_KEY"])
+
+# Configure Weights & Biases to record against our project
+os.environ["WANDB_PROJECT"] = PROJECT_NAME
+os.environ["WANDB_LOG_MODEL"] = "false"
+os.environ["WANDB_WATCH"] = "false"
+
+wandb.init(project=PROJECT_NAME, name=RUN_NAME)
 
 """## Create and prepare the fine-tuning dataset
 
@@ -313,7 +330,7 @@ import torch
 from trl import SFTConfig
 
 args = SFTConfig(
-    output_dir="gemma-text-to-sql",         # directory to save and repository id
+    output_dir=PROJECT_RUN_NAME,             # directory to save and repository id
     max_length=512,                         # max length for model and packing of the dataset
     num_train_epochs=3,                     # number of training epochs
     per_device_train_batch_size=1,          # batch size per device during training
@@ -327,7 +344,8 @@ args = SFTConfig(
     bf16=True if torch_dtype == torch.bfloat16 else False, # use bfloat16 precision
     lr_scheduler_type="constant",           # use constant learning rate scheduler
     push_to_hub=True,                       # push model to hub
-    report_to="tensorboard",                # report metrics to tensorboard
+    report_to=["wandb", "tensorboard"],     # report metrics to W&B and tensorboard
+    run_name=RUN_NAME,                      # W&B run name
     dataset_kwargs={"skip_prepare_dataset": True}, # important for collator
     remove_unused_columns = False,                 # important for collator
 )
@@ -449,6 +467,9 @@ trainer.train()
 
 # Save the final model again to the Hugging Face Hub
 trainer.save_model()
+
+# Close out the W&B run so the learning curves are marked finished
+wandb.finish()
 
 """Before you can test your model, make sure to free the memory."""
 
