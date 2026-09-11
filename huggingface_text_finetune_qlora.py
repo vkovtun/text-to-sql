@@ -81,7 +81,10 @@ You need a valid Hugging Face Token to publish your model. If you are running in
 
 from pathlib import Path
 from typing import Any
+from functools import lru_cache
 import json
+import re
+import sqlite3
 from datasets import Dataset, DatasetDict, load_dataset
 
 import torch
@@ -89,6 +92,7 @@ from transformers import AutoProcessor, AutoModelForMultimodalLM, BitsAndBytesCo
 from peft import prepare_model_for_kbit_training
 
 DATA_DIR = Path(__file__).parent / "spider_data"
+DATABASE_DIR = DATA_DIR / "database"
 
 # Login into Hugging Face Hub
 from huggingface_hub import login
@@ -138,11 +142,62 @@ You can now use the Hugging Face Datasets library to load the dataset and create
 # System message for the assistant
 system_message = """You are a text to SQL query translator. Users will ask you questions in English and you will generate a SQL query based on the provided SCHEMA."""
 
+# User prompt that combines the user query and the schema
+user_prompt = """Given the <USER_QUERY> and the <SCHEMA>, generate the corresponding SQL command to retrieve the desired data, considering the query's syntax, semantics, and schema constraints.
+
+<SCHEMA>
+{context}
+</SCHEMA>
+
+<USER_QUERY>
+{question}
+</USER_QUERY>
+"""
+
+
+CREATE_TABLE_RE = re.compile(r"CREATE\s+TABLE\b.*?;", re.IGNORECASE | re.DOTALL)
+
+
+@lru_cache(maxsize=None)
+def load_schema(db_id: str) -> str:
+    """Return the CREATE TABLE DDL for a Spider database.
+
+    Prefers the pre-written database/<db_id>/schema.sql; falls back to
+    introspecting the .sqlite file's sqlite_master table for the handful
+    of Spider DBs that ship without a schema.sql.
+
+    Several schema.sql files (e.g. soccer_1 at 322MB, baseball_1 at 57MB)
+    are full dumps containing millions of INSERT statements alongside the
+    DDL, so only the CREATE TABLE statements are extracted — embedding the
+    full dump blew past pyarrow's 2GB string-array limit when building the
+    dataset.
+    """
+    schema_path = DATABASE_DIR / db_id / "schema.sql"
+    if schema_path.exists():
+        raw_sql = schema_path.read_text(encoding="utf-8")
+        return "\n".join(s.strip() for s in CREATE_TABLE_RE.findall(raw_sql))
+
+    sqlite_path = DATABASE_DIR / db_id / f"{db_id}.sqlite"
+    con = sqlite3.connect(sqlite_path)
+    try:
+        rows = con.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND sql IS NOT NULL"
+        ).fetchall()
+    finally:
+        con.close()
+    return ";\n".join(row[0] for row in rows).strip() + ";"
+
+
 def create_conversation(sample, idx):
     return {
         "messages": [
             {"role": "system", "content": system_message},
-            {"role": "user", "content": sample["question"]},
+            {
+                "role": "user",
+                "content": user_prompt.format(
+                    question=sample["question"], context=load_schema(sample["db_id"])
+                ),
+            },
             {"role": "assistant", "content": sample["query"]},
         ]
     }
@@ -277,6 +332,26 @@ args = SFTConfig(
     remove_unused_columns = False,                 # important for collator
 )
 
+"""Now that the DB schema is embedded in each prompt, some examples (schema-heavy DBs
+like baseball_1 or soccer_1) no longer fit in `max_length` tokens alongside their SQL
+answer. Rather than silently truncating those into the collator's fallback path (which
+would compute loss on truncated prompt text instead of the SQL target), drop them from
+the dataset up front."""
+
+def _token_length(messages: list[dict[str, str]]) -> int:
+    full_text = processor.apply_chat_template(
+        messages, add_generation_prompt=False, tokenize=False
+    ).strip()
+    return len(processor(text=[full_text])["input_ids"][0])
+
+for split in dataset:
+    before = len(dataset[split])
+    dataset[split] = dataset[split].filter(
+        lambda example: _token_length(example["messages"]) <= args.max_length
+    )
+    dropped = before - len(dataset[split])
+    print(f"{split}: dropped {dropped}/{before} examples exceeding max_length={args.max_length} tokens")
+
 # Data collator
 def collate_fn(examples):
     texts = []
@@ -288,7 +363,13 @@ def collate_fn(examples):
         texts.append(full_text.strip())
 
     # Tokenize the texts and process the audios
-    batch = processor(text=texts, return_tensors="pt", padding=True)
+    batch = processor(
+        text=texts,
+        return_tensors="pt",
+        padding=True,
+        truncation=True,
+        max_length=args.max_length,
+    )
 
     # The labels are the input_ids, and we mask the padding tokens and audio tokens in the loss computation
     labels = batch["input_ids"].clone()
@@ -390,7 +471,7 @@ model = AutoModelForMultimodalLM.from_pretrained(model_id, low_cpu_mem_usage=Tru
 # Merge LoRA and base model and save
 peft_model = PeftModel.from_pretrained(model, args.output_dir)
 merged_model = peft_model.merge_and_unload()
-merged_model.save_pretrained("merged_model", safe_serialization=True, max_shard_size="2GB")
+merged_model.save_pretrained("text2sql_qlora", safe_serialization=True, max_shard_size="2GB")
 
 processor = AutoProcessor.from_pretrained("google/gemma-4-E2B-it")
-processor.save_pretrained("merged_model")
+processor.save_pretrained("text2sql_qlora")
