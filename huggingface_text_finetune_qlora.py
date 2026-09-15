@@ -98,6 +98,20 @@ PROJECT_NAME = "gemma-text-to-sql"
 # Hugging Face model id
 MODEL_ID = "google/gemma-4-E2B" # @param ["google/gemma-4-E2B","google/gemma-4-E4B","google/gemma-4-12B","google/gemma-4-31B","google/gemma-4-26B-A4B"] {"allow-input":true}
 
+# Quick local smoke-test switch: trims the dataset and lightens hyperparameters so the
+# whole pipeline can be exercised in a few minutes on a single 16GB GPU. Set to False for a full training run.
+LITE_MODE = True
+
+LITE_TRAIN_SAMPLES = 200
+LITE_EVAL_SAMPLES = 50
+LITE_MAX_LENGTH = 512
+LITE_NUM_EPOCHS = 1
+LITE_LOGGING_STEPS = 1
+
+FULL_MAX_LENGTH = 1024
+FULL_NUM_EPOCHS = 3
+FULL_LOGGING_STEPS = 10
+
 """## Create and prepare the fine-tuning dataset
 
 [Hugging Face TRL](https://huggingface.co/docs/trl/en/index) supports automatic templating of conversation dataset formats. This means you only need to convert your dataset into the right json objects, and `trl` takes care of templating and putting it into the right format.
@@ -280,13 +294,15 @@ def build_collate_fn(processor, max_length: int):
 
 
 def main() -> None:
+    print(f"LITE_MODE is {'ON' if LITE_MODE else 'OFF'}")
+
     # Load environment variables from .env file
     load_dotenv()
 
     hf_token = os.environ["HF_TOKEN"]
     login(hf_token, add_to_git_credential=True)
 
-    run_name = f"{datetime.now():%Y-%m-%d_%H.%M.%S}"
+    run_name = f"{datetime.now():%Y-%m-%d_%H.%M.%S}-finetune-QLORA" + "-lite" if LITE_MODE else ""
     project_run_name = f"{PROJECT_NAME}-{run_name}"
 
     # Log in to Weights & Biases
@@ -304,6 +320,11 @@ def main() -> None:
         "train": Dataset.from_list(to_conversations(load_train_dataset())),
         "validation": Dataset.from_list(to_conversations(load_dev_dataset())),
     })
+
+    if LITE_MODE:
+        dataset["train"] = dataset["train"].select(range(min(LITE_TRAIN_SAMPLES, len(dataset["train"]))))
+        dataset["validation"] = dataset["validation"].select(range(min(LITE_EVAL_SAMPLES, len(dataset["validation"]))))
+        print(f"LITE_MODE: trimmed dataset to {len(dataset['train'])} train / {len(dataset['validation'])} validation examples")
 
     # Print formatted user prompt
     for item in dataset["train"][0]:
@@ -361,19 +382,19 @@ def main() -> None:
 
     args = SFTConfig(
         output_dir=project_run_name,            # directory to save and repository id
-        max_length=512,                         # max length for model and packing of the dataset
-        num_train_epochs=3,                     # number of training epochs
+        max_length=LITE_MAX_LENGTH if LITE_MODE else FULL_MAX_LENGTH,       # max length for model and packing of the dataset
+        num_train_epochs=LITE_NUM_EPOCHS if LITE_MODE else FULL_NUM_EPOCHS, # number of training epochs
         per_device_train_batch_size=1,          # batch size per device during training
         per_device_eval_batch_size=1,           # batch size per device during evaluation
         optim="adamw_torch_fused",              # use fused adamw optimizer
-        logging_steps=10,                       # log every 10 steps
-        save_strategy="epoch",                  # save checkpoint every epoch
+        logging_steps=LITE_LOGGING_STEPS if LITE_MODE else FULL_LOGGING_STEPS, # log every N steps
+        save_strategy="no" if LITE_MODE else "epoch", # skip intermediate checkpoints in lite mode
         eval_strategy="epoch",                  # evaluate checkpoint every epoch
         learning_rate=2e-4,                     # learning rate
         fp16=True if torch_dtype == torch.float16 else False,  # use float16 precision
         bf16=True if torch_dtype == torch.bfloat16 else False, # use bfloat16 precision
         lr_scheduler_type="constant",           # use constant learning rate scheduler
-        push_to_hub=True,                       # push model to hub
+        push_to_hub=not LITE_MODE,              # don't push smoke-test runs to the hub
         report_to=["wandb", "tensorboard"],     # report metrics to W&B and tensorboard
         run_name=run_name,                      # W&B run name
         dataset_kwargs={"skip_prepare_dataset": True}, # important for collator
