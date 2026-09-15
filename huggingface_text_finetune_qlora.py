@@ -102,8 +102,8 @@ MODEL_ID = "google/gemma-4-E2B" # @param ["google/gemma-4-E2B","google/gemma-4-E
 # whole pipeline can be exercised in a few minutes on a single 16GB GPU. Set to False for a full training run.
 LITE_MODE = True
 
-LITE_TRAIN_SAMPLES = 200
-LITE_EVAL_SAMPLES = 50
+LITE_TRAIN_SAMPLES = 500
+LITE_EVAL_SAMPLES = 125
 LITE_MAX_LENGTH = 512
 LITE_NUM_EPOCHS = 1
 LITE_LOGGING_STEPS = 1
@@ -302,7 +302,7 @@ def main() -> None:
     hf_token = os.environ["HF_TOKEN"]
     login(hf_token, add_to_git_credential=True)
 
-    run_name = f"{datetime.now():%Y-%m-%d_%H.%M.%S}-finetune-QLORA" + "-lite" if LITE_MODE else ""
+    run_name = f"{datetime.now():%Y-%m-%d_%H.%M.%S}-finetune-QLORA" + ("-lite" if LITE_MODE else "")
     project_run_name = f"{PROJECT_NAME}-{run_name}"
 
     # Log in to Weights & Biases
@@ -320,11 +320,6 @@ def main() -> None:
         "train": Dataset.from_list(to_conversations(load_train_dataset())),
         "validation": Dataset.from_list(to_conversations(load_dev_dataset())),
     })
-
-    if LITE_MODE:
-        dataset["train"] = dataset["train"].select(range(min(LITE_TRAIN_SAMPLES, len(dataset["train"]))))
-        dataset["validation"] = dataset["validation"].select(range(min(LITE_EVAL_SAMPLES, len(dataset["validation"]))))
-        print(f"LITE_MODE: trimmed dataset to {len(dataset['train'])} train / {len(dataset['validation'])} validation examples")
 
     # Print formatted user prompt
     for item in dataset["train"][0]:
@@ -409,6 +404,8 @@ def main() -> None:
 
     token_length = build_token_length_fn(processor)
 
+    lite_split_caps = {"train": LITE_TRAIN_SAMPLES, "validation": LITE_EVAL_SAMPLES}
+
     for split in dataset:
         before = len(dataset[split])
         dataset[split] = dataset[split].filter(
@@ -416,6 +413,11 @@ def main() -> None:
         )
         dropped = before - len(dataset[split])
         print(f"{split}: dropped {dropped}/{before} examples exceeding max_length={args.max_length} tokens")
+
+        if LITE_MODE:
+            cap = lite_split_caps[split]
+            dataset[split] = dataset[split].select(range(min(cap, len(dataset[split]))))
+            print(f"LITE_MODE: trimmed {split} to {len(dataset[split])} examples (post-filter)")
 
     collate_fn = build_collate_fn(processor, args.max_length)
 
