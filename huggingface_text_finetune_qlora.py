@@ -41,16 +41,6 @@ Original file is located at
   </td>
 </table>
 
-This guide walks you through how to fine-tune Gemma on a custom text-to-sql dataset using Hugging Face [Transformers](https://huggingface.co/docs/transformers/index) and [TRL](https://huggingface.co/docs/trl/index). You will learn:
-
-- What is Quantized Low-Rank Adaptation (QLoRA)
-- Setup development environment
-- Create and prepare the fine-tuning dataset
-- Fine-tune Gemma using TRL and the SFTTrainer
-- Test Model Inference and generate SQL queries
-
-Note: This guide was created to run on a Google colaboratory account using a NVIDIA T4 GPU with 16GB and Gemma 1B, but can be adapted to run on bigger GPUs and bigger models.
-
 ## What is Quantized Low-Rank Adaptation (QLoRA)
 
 This guide demonstrates the use of [Quantized Low-Rank Adaptation (QLoRA)](https://arxiv.org/abs/2305.14314), which emerged as a popular method to efficiently fine-tune LLMs as it reduces computational resource requirements while maintaining high performance. In QloRA, the pretrained model is quantized to 4-bit and the weights are frozen. Then trainable adapter layers (LoRA) are attached and only the adapter layers are trained. Afterwards, the adapter weights can be merged with the base model or kept as a separate adapter.
@@ -91,57 +81,24 @@ from datasets import Dataset, DatasetDict, load_dataset
 import torch
 import wandb
 from transformers import AutoProcessor, AutoModelForMultimodalLM, BitsAndBytesConfig
-from peft import prepare_model_for_kbit_training
-
-DATA_DIR = Path(__file__).parent / "spider_data"
-DATABASE_DIR = DATA_DIR / "database"
+from peft import prepare_model_for_kbit_training, LoraConfig, PeftModel
+from trl import SFTConfig, SFTTrainer
 
 # Login into Hugging Face Hub
 from huggingface_hub import login
 import os
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
-
-hf_token = os.environ["HF_TOKEN"]
-login(hf_token, add_to_git_credential=True)
+DATA_DIR = Path(__file__).parent / "spider_data"
+DATABASE_DIR = DATA_DIR / "database"
 
 # Run identity, shared between the Hub repo name and the W&B run
 PROJECT_NAME = "gemma-text-to-sql"
-RUN_NAME = f"{datetime.now():%Y-%m-%d_%H.%M.%S}"
-PROJECT_RUN_NAME = f"{PROJECT_NAME}-{RUN_NAME}"
 
-# Log in to Weights & Biases
-wandb.login(key=os.environ["WANDB_API_KEY"])
-
-# Configure Weights & Biases to record against our project
-os.environ["WANDB_PROJECT"] = PROJECT_NAME
-os.environ["WANDB_LOG_MODEL"] = "false"
-os.environ["WANDB_WATCH"] = "false"
-
-wandb.init(project=PROJECT_NAME, name=RUN_NAME)
+# Hugging Face model id
+MODEL_ID = "google/gemma-4-E2B" # @param ["google/gemma-4-E2B","google/gemma-4-E4B","google/gemma-4-12B","google/gemma-4-31B","google/gemma-4-26B-A4B"] {"allow-input":true}
 
 """## Create and prepare the fine-tuning dataset
-
-When fine-tuning LLMs, it is important to know your use case and the task you want to solve. This helps you create a dataset to fine-tune your model. If you haven't defined your use case yet, you might want to go back to the drawing board.
-
-As an example, this guide focuses on the following use case:
-
-- Fine-tune a natural language to SQL model for seamless integration into a data analysis tool. The objective is to significantly reduce the time and expertise required for SQL query generation, enabling even non-technical users to extract meaningful insights from data.
-
-Text-to-SQL can be a good use case for fine-tuning LLMs, as it is a complex task that requires a lot of (internal) knowledge about the data and the SQL language.
-
-Once you have determined that fine-tuning is the right solution, you need a dataset to fine-tune. The dataset should be a diverse set of demonstrations of the task(s) you want to solve. There are several ways to create such a dataset, including:
-
-- Using existing open-source datasets, such as [Spider](https://huggingface.co/datasets/spider)
-- Using synthetic datasets created by LLMs, such as [Alpaca](https://huggingface.co/datasets/tatsu-lab/alpaca)
-- Using datasets created by humans, such as [Dolly](https://huggingface.co/datasets/databricks/databricks-dolly-15k).
-- Using a combination of the methods, such as [Orca](https://huggingface.co/datasets/Open-Orca/OpenOrca)
-
-Each of the methods has its own advantages and disadvantages and depends on the budget, time, and quality requirements. For example, using an existing dataset is the easiest but might not be tailored to your specific use case, while using domain experts might be the most accurate but can be time-consuming and expensive. It is also possible to combine several methods to create an instruction dataset, as shown in [Orca: Progressive Learning from Complex Explanation Traces of GPT-4.](https://arxiv.org/abs/2306.02707)
-
-This guide uses an already existing dataset ([philschmid/gretel-synthetic-text-to-sql](https://huggingface.co/datasets/philschmid/gretel-synthetic-text-to-sql)), a high quality synthetic Text-to-SQL dataset including natural language instructions, schema definitions, reasoning and the corresponding SQL query.
 
 [Hugging Face TRL](https://huggingface.co/docs/trl/en/index) supports automatic templating of conversation dataset formats. This means you only need to convert your dataset into the right json objects, and `trl` takes care of templating and putting it into the right format.
 
@@ -253,246 +210,241 @@ def to_conversations(samples: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [create_conversation(sample, idx) for idx, sample in enumerate(samples)]
 
 
-# Load the dataset
-dataset = DatasetDict({
-    "train": Dataset.from_list(to_conversations(load_train_dataset())),
-    "validation": Dataset.from_list(to_conversations(load_dev_dataset())),
-})
-
-# Print formatted user prompt
-for item in dataset["train"][0]:
-  print(item)
-
-"""## Fine-tune Gemma using TRL and the SFTTrainer
-
-You are now ready to fine-tune your model. Hugging Face TRL [SFTTrainer](https://huggingface.co/docs/trl/sft_trainer) makes it straightforward to supervise fine-tune open LLMs. The `SFTTrainer` is a subclass of the `Trainer` from the `transformers` library and supports all the same features, including logging, evaluation, and checkpointing, but adds additional quality of life features, including:
-
-* Dataset formatting, including conversational and instruction formats
-* Training on completions only, ignoring prompts
-* Packing datasets for more efficient training
-* Parameter-efficient fine-tuning (PEFT) support including QloRA
-* Preparing the model and tokenizer for conversational fine-tuning (such as adding special tokens)
-
-The following code loads the Gemma model and tokenizer from Hugging Face and initializes the quantization configuration.
-"""
-
-# Hugging Face model id
-model_id = "google/gemma-4-E2B" # @param ["google/gemma-4-E2B","google/gemma-4-E4B","google/gemma-4-12B","google/gemma-4-31B","google/gemma-4-26B-A4B"] {"allow-input":true}
-
-# Check if GPU supports bfloat16
-if torch.cuda.is_bf16_supported():
-    torch_dtype = torch.bfloat16
-else:
-    torch_dtype = torch.float16
-
-# Define model init arguments
-model_kwargs = dict(
-    dtype=torch_dtype, # What torch dtype to use
-    device_map="auto", # Let torch decide how to load the model
-)
-
-# BitsAndBytesConfig: Enables 4-bit quantization to reduce model size/memory usage
-model_kwargs["quantization_config"] = BitsAndBytesConfig(
-    load_in_4bit=True,
-    bnb_4bit_use_double_quant=True,
-    bnb_4bit_quant_type='nf4',
-    bnb_4bit_compute_dtype=torch_dtype,
-    bnb_4bit_quant_storage=torch_dtype,
-)
-
-# Load model and processor
-model = AutoModelForMultimodalLM.from_pretrained(model_id, **model_kwargs)
-processor = AutoProcessor.from_pretrained("google/gemma-4-E2B-it") # Load the Instruction Processor to use the official Gemma template
-
-# NOTE: You should call the prepare_model_for_kbit_training() function to preprocess the quantized model for training.
-# On T4, we are skipping this step purely due to VRAM limitation and for a quick demonstration.
-if (torch.cuda.get_device_properties(0).total_memory/1024**3) > 16:
-    model = prepare_model_for_kbit_training(model)
-
-"""The `SFTTrainer` supports a built-in integration with `peft`, which makes it straightforward to efficiently tune LLMs using QLoRA. You only need to create a `LoraConfig` and provide it to the trainer."""
-
-from peft import LoraConfig
-
-peft_config = LoraConfig(
-    lora_alpha=16,
-    lora_dropout=0.05,
-    r=16,
-    bias="none",
-    # no target_modules — PEFT's Gemma 4 defaults scope to the LM layers
-    task_type="CAUSAL_LM",
-    modules_to_save=["lm_head", "embed_tokens"], # make sure to save the lm_head and embed_tokens as you train the special tokens
-    ensure_weight_tying=True,
-)
-
-"""Before you can start your training, you need to define the hyperparameter you want to use in a `SFTConfig` instance."""
-
-import torch
-from trl import SFTConfig
-
-args = SFTConfig(
-    output_dir=PROJECT_RUN_NAME,             # directory to save and repository id
-    max_length=512,                         # max length for model and packing of the dataset
-    num_train_epochs=3,                     # number of training epochs
-    per_device_train_batch_size=1,          # batch size per device during training
-    per_device_eval_batch_size=1,           # batch size per device during evaluation
-    optim="adamw_torch_fused",              # use fused adamw optimizer
-    logging_steps=10,                       # log every 10 steps
-    save_strategy="epoch",                  # save checkpoint every epoch
-    eval_strategy="epoch",                  # evaluate checkpoint every epoch
-    learning_rate=2e-4,                     # learning rate
-    fp16=True if torch_dtype == torch.float16 else False,  # use float16 precision
-    bf16=True if torch_dtype == torch.bfloat16 else False, # use bfloat16 precision
-    lr_scheduler_type="constant",           # use constant learning rate scheduler
-    push_to_hub=True,                       # push model to hub
-    report_to=["wandb", "tensorboard"],     # report metrics to W&B and tensorboard
-    run_name=RUN_NAME,                      # W&B run name
-    dataset_kwargs={"skip_prepare_dataset": True}, # important for collator
-    remove_unused_columns = False,                 # important for collator
-)
-
-"""Now that the DB schema is embedded in each prompt, some examples (schema-heavy DBs
-like baseball_1 or soccer_1) no longer fit in `max_length` tokens alongside their SQL
-answer. Rather than silently truncating those into the collator's fallback path (which
-would compute loss on truncated prompt text instead of the SQL target), drop them from
-the dataset up front."""
-
-def _token_length(messages: list[dict[str, str]]) -> int:
-    full_text = processor.apply_chat_template(
-        messages, add_generation_prompt=False, tokenize=False
-    ).strip()
-    return len(processor(text=[full_text])["input_ids"][0])
-
-for split in dataset:
-    before = len(dataset[split])
-    dataset[split] = dataset[split].filter(
-        lambda example: _token_length(example["messages"]) <= args.max_length
-    )
-    dropped = before - len(dataset[split])
-    print(f"{split}: dropped {dropped}/{before} examples exceeding max_length={args.max_length} tokens")
-
-# Data collator
-def collate_fn(examples):
-    texts = []
-
-    for example in examples:
+def build_token_length_fn(processor):
+    """Return a function that measures the chat-templated token length of a
+    list of messages, for filtering out examples that won't fit max_length."""
+    def token_length(messages: list[dict[str, str]]) -> int:
         full_text = processor.apply_chat_template(
-            example["messages"], add_generation_prompt=False, tokenize=False
-        )
-        texts.append(full_text.strip())
+            messages, add_generation_prompt=False, tokenize=False
+        ).strip()
+        return len(processor(text=[full_text])["input_ids"][0])
+    return token_length
 
-    # Tokenize the texts and process the audios
-    batch = processor(
-        text=texts,
-        return_tensors="pt",
-        padding=True,
-        truncation=True,
-        max_length=args.max_length,
+
+def build_collate_fn(processor, max_length: int):
+    """Return a data collator bound to the given processor and max_length."""
+    def collate_fn(examples):
+        texts = []
+
+        for example in examples:
+            full_text = processor.apply_chat_template(
+                example["messages"], add_generation_prompt=False, tokenize=False
+            )
+            texts.append(full_text.strip())
+
+        # Tokenize the texts and process the audios
+        batch = processor(
+            text=texts,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=max_length,
+        )
+
+        # The labels are the input_ids, and we mask the padding tokens and audio tokens in the loss computation
+        labels = batch["input_ids"].clone()
+
+        target_tokens = [
+            processor.tokenizer.convert_tokens_to_ids("<|turn>"),
+            processor.tokenizer.convert_tokens_to_ids("model"),
+            processor.tokenizer.convert_tokens_to_ids("\n")
+        ]
+        target_len = len(target_tokens)
+
+        for i in range(labels.size(0)):
+            row_tokens = batch["input_ids"][i].tolist()
+
+            # Find where the assistant block begins
+            assistant_start_idx = None
+            for idx in range(len(row_tokens) - target_len + 1):
+                if row_tokens[idx : idx + target_len] == target_tokens:
+                    # We want to keep loss calculation on the assistant transcription tokens,
+                    # so we move the index right past the assistant header ('<|turn>\nmodel\n')
+                    assistant_start_idx = idx + target_len
+                    break
+
+            if assistant_start_idx is not None:
+                # Mask everything from index 0 up to the start of the actual Japanese text response
+                labels[i, :assistant_start_idx] = -100
+            else:
+                # Fallback safety: if template matching fails for an anomalous row, mask padding anyway
+                print("WARNING: maybe the sample is too long, try to increase `token_limit` value.")
+                labels[i, labels[i] == processor.tokenizer.pad_token_id] = -100
+
+        # Mask tokens for not being used in the loss computation
+        labels[labels == processor.tokenizer.pad_token_id] = -100
+
+        batch["labels"] = labels
+        return batch
+    return collate_fn
+
+
+def main() -> None:
+    # Load environment variables from .env file
+    load_dotenv()
+
+    hf_token = os.environ["HF_TOKEN"]
+    login(hf_token, add_to_git_credential=True)
+
+    run_name = f"{datetime.now():%Y-%m-%d_%H.%M.%S}"
+    project_run_name = f"{PROJECT_NAME}-{run_name}"
+
+    # Log in to Weights & Biases
+    wandb.login(key=os.environ["WANDB_API_KEY"])
+
+    # Configure Weights & Biases to record against our project
+    os.environ["WANDB_PROJECT"] = PROJECT_NAME
+    os.environ["WANDB_LOG_MODEL"] = "false"
+    os.environ["WANDB_WATCH"] = "false"
+
+    wandb.init(project=PROJECT_NAME, name=run_name)
+
+    # Load the dataset
+    dataset = DatasetDict({
+        "train": Dataset.from_list(to_conversations(load_train_dataset())),
+        "validation": Dataset.from_list(to_conversations(load_dev_dataset())),
+    })
+
+    # Print formatted user prompt
+    for item in dataset["train"][0]:
+        print(item)
+
+    """## Fine-tune Gemma using TRL and the SFTTrainer
+
+    The following code loads the Gemma model and tokenizer from Hugging Face and initializes the quantization configuration.
+    """
+
+    # Check if GPU supports bfloat16
+    if torch.cuda.is_bf16_supported():
+        torch_dtype = torch.bfloat16
+    else:
+        torch_dtype = torch.float16
+
+    # Define model init arguments
+    model_kwargs = dict(
+        dtype=torch_dtype, # What torch dtype to use
+        device_map="auto", # Let torch decide how to load the model
     )
 
-    # The labels are the input_ids, and we mask the padding tokens and audio tokens in the loss computation
-    labels = batch["input_ids"].clone()
+    # BitsAndBytesConfig: Enables 4-bit quantization to reduce model size/memory usage
+    model_kwargs["quantization_config"] = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_use_double_quant=True,
+        bnb_4bit_quant_type='nf4',
+        bnb_4bit_compute_dtype=torch_dtype,
+        bnb_4bit_quant_storage=torch_dtype,
+    )
 
-    target_tokens = [
-        processor.tokenizer.convert_tokens_to_ids("<|turn>"),
-        processor.tokenizer.convert_tokens_to_ids("model"),
-        processor.tokenizer.convert_tokens_to_ids("\n")
-    ]
-    target_len = len(target_tokens)
+    # Load model and processor
+    model = AutoModelForMultimodalLM.from_pretrained(MODEL_ID, **model_kwargs)
+    processor = AutoProcessor.from_pretrained("google/gemma-4-E2B-it") # Load the Instruction Processor to use the official Gemma template
 
-    for i in range(labels.size(0)):
-        row_tokens = batch["input_ids"][i].tolist()
+    # NOTE: You should call the prepare_model_for_kbit_training() function to preprocess the quantized model for training.
+    # On T4, we are skipping this step purely due to VRAM limitation and for a quick demonstration.
+    if (torch.cuda.get_device_properties(0).total_memory/1024**3) > 16:
+        model = prepare_model_for_kbit_training(model)
 
-        # Find where the assistant block begins
-        assistant_start_idx = None
-        for idx in range(len(row_tokens) - target_len + 1):
-            if row_tokens[idx : idx + target_len] == target_tokens:
-                # We want to keep loss calculation on the assistant transcription tokens,
-                # so we move the index right past the assistant header ('<|turn>\nmodel\n')
-                assistant_start_idx = idx + target_len
-                break
+    """The `SFTTrainer` supports a built-in integration with `peft`, which makes it straightforward to efficiently tune LLMs using QLoRA. You only need to create a `LoraConfig` and provide it to the trainer."""
 
-        if assistant_start_idx is not None:
-            # Mask everything from index 0 up to the start of the actual Japanese text response
-            labels[i, :assistant_start_idx] = -100
-        else:
-            # Fallback safety: if template matching fails for an anomalous row, mask padding anyway
-            print("WARNING: maybe the sample is too long, try to increase `token_limit` value.")
-            labels[i, labels[i] == processor.tokenizer.pad_token_id] = -100
+    peft_config = LoraConfig(
+        lora_alpha=16,
+        lora_dropout=0.05,
+        r=16,
+        bias="none",
+        # no target_modules — PEFT's Gemma 4 defaults scope to the LM layers
+        task_type="CAUSAL_LM",
+        modules_to_save=["lm_head", "embed_tokens"], # make sure to save the lm_head and embed_tokens as you train the special tokens
+        ensure_weight_tying=True,
+    )
 
-        """
-        # --- DEBUG PRINT CODE ---
-        print(f"\n--- Example {i} (Split index: {assistant_start_idx}) ---")
-        debug_string = []
-        for token_id, label_id in zip(row_tokens, labels[i].tolist()):
-            # Decode token by token so we can see exactly what is masked
-            decoded_token = processor.tokenizer.decode([token_id])
+    """Before you can start your training, you need to define the hyperparameter you want to use in a `SFTConfig` instance."""
 
-            if label_id == -100:
-                # Red text for masked tokens (ANSI Escape Code)
-                debug_string.append(f"\033[91m{decoded_token}\033[0m")
-            else:
-                # Green text for active loss tokens
-                debug_string.append(f"\033[92m{decoded_token}\033[0m")
+    args = SFTConfig(
+        output_dir=project_run_name,            # directory to save and repository id
+        max_length=512,                         # max length for model and packing of the dataset
+        num_train_epochs=3,                     # number of training epochs
+        per_device_train_batch_size=1,          # batch size per device during training
+        per_device_eval_batch_size=1,           # batch size per device during evaluation
+        optim="adamw_torch_fused",              # use fused adamw optimizer
+        logging_steps=10,                       # log every 10 steps
+        save_strategy="epoch",                  # save checkpoint every epoch
+        eval_strategy="epoch",                  # evaluate checkpoint every epoch
+        learning_rate=2e-4,                     # learning rate
+        fp16=True if torch_dtype == torch.float16 else False,  # use float16 precision
+        bf16=True if torch_dtype == torch.bfloat16 else False, # use bfloat16 precision
+        lr_scheduler_type="constant",           # use constant learning rate scheduler
+        push_to_hub=True,                       # push model to hub
+        report_to=["wandb", "tensorboard"],     # report metrics to W&B and tensorboard
+        run_name=run_name,                      # W&B run name
+        dataset_kwargs={"skip_prepare_dataset": True}, # important for collator
+        remove_unused_columns = False,                 # important for collator
+    )
 
-        print("".join(debug_string))
-        # ------------------------
-        """
+    """Now that the DB schema is embedded in each prompt, some examples (schema-heavy DBs
+    like baseball_1 or soccer_1) no longer fit in `max_length` tokens alongside their SQL
+    answer. Rather than silently truncating those into the collator's fallback path (which
+    would compute loss on truncated prompt text instead of the SQL target), drop them from
+    the dataset up front."""
+
+    token_length = build_token_length_fn(processor)
+
+    for split in dataset:
+        before = len(dataset[split])
+        dataset[split] = dataset[split].filter(
+            lambda example: token_length(example["messages"]) <= args.max_length
+        )
+        dropped = before - len(dataset[split])
+        print(f"{split}: dropped {dropped}/{before} examples exceeding max_length={args.max_length} tokens")
+
+    collate_fn = build_collate_fn(processor, args.max_length)
+
+    """You now have every building block you need to create your `SFTTrainer` to start the training of your model."""
+
+    # Create Trainer object
+    trainer = SFTTrainer(
+        model=model,
+        args=args,
+        train_dataset=dataset["train"],
+        eval_dataset=dataset["validation"],
+        peft_config=peft_config,
+        processing_class=processor,
+        data_collator=collate_fn,
+    )
+
+    """Start training by calling the `train()` method."""
+
+    # Start training, the model will be automatically saved to the Hub and the output directory
+    trainer.train()
+
+    # Save the final model again to the Hugging Face Hub
+    trainer.save_model()
+
+    # Close out the W&B run so the learning curves are marked finished
+    wandb.finish()
+
+    """Before you can test your model, make sure to free the memory."""
+
+    # free the memory again
+    del model
+    del trainer
+    torch.cuda.empty_cache()
+
+    """When using QLoRA, you only train adapters and not the full model. This means when saving the model during training you only save the adapter weights and not the full model. If you want to save the full model, which makes it easier to use with serving stacks like vLLM or TGI, you can merge the adapter weights into the model weights using the `merge_and_unload` method and then save the model with the `save_pretrained` method. This saves a default model, which can be used for inference.
+
+    Note: It requires more than 30GB of CPU Memory when you want to merge the adapter into the model. You can skip this and continue with Test Model Inference.
+    """
+
+    # Load Model base model
+    model = AutoModelForMultimodalLM.from_pretrained(MODEL_ID, low_cpu_mem_usage=True)
+
+    # Merge LoRA and base model and save
+    peft_model = PeftModel.from_pretrained(model, args.output_dir)
+    merged_model = peft_model.merge_and_unload()
+    merged_model.save_pretrained("text2sql_qlora", safe_serialization=True, max_shard_size="2GB")
+
+    processor = AutoProcessor.from_pretrained("google/gemma-4-E2B-it")
+    processor.save_pretrained("text2sql_qlora")
 
 
-    # Mask tokens for not being used in the loss computation
-    labels[labels == processor.tokenizer.pad_token_id] = -100
-
-    batch["labels"] = labels
-    return batch
-
-"""You now have every building block you need to create your `SFTTrainer` to start the training of your model."""
-
-from trl import SFTTrainer
-
-# Create Trainer object
-trainer = SFTTrainer(
-    model=model,
-    args=args,
-    train_dataset=dataset["train"],
-    eval_dataset=dataset["validation"],
-    peft_config=peft_config,
-    processing_class=processor,
-    data_collator=collate_fn,
-)
-
-"""Start training by calling the `train()` method."""
-
-# Start training, the model will be automatically saved to the Hub and the output directory
-trainer.train()
-
-# Save the final model again to the Hugging Face Hub
-trainer.save_model()
-
-# Close out the W&B run so the learning curves are marked finished
-wandb.finish()
-
-"""Before you can test your model, make sure to free the memory."""
-
-# free the memory again
-del model
-del trainer
-torch.cuda.empty_cache()
-
-"""When using QLoRA, you only train adapters and not the full model. This means when saving the model during training you only save the adapter weights and not the full model. If you want to save the full model, which makes it easier to use with serving stacks like vLLM or TGI, you can merge the adapter weights into the model weights using the `merge_and_unload` method and then save the model with the `save_pretrained` method. This saves a default model, which can be used for inference.
-
-Note: It requires more than 30GB of CPU Memory when you want to merge the adapter into the model. You can skip this and continue with Test Model Inference.
-"""
-
-from transformers import AutoModelForMultimodalLM, AutoProcessor
-from peft import PeftModel
-
-# Load Model base model
-model = AutoModelForMultimodalLM.from_pretrained(model_id, low_cpu_mem_usage=True)
-
-# Merge LoRA and base model and save
-peft_model = PeftModel.from_pretrained(model, args.output_dir)
-merged_model = peft_model.merge_and_unload()
-merged_model.save_pretrained("text2sql_qlora", safe_serialization=True, max_shard_size="2GB")
-
-processor = AutoProcessor.from_pretrained("google/gemma-4-E2B-it")
-processor.save_pretrained("text2sql_qlora")
+if __name__ == "__main__":
+    main()

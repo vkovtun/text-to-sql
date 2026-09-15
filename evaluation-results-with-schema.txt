@@ -1,0 +1,822 @@
+ "John Zoidfarb" AND T2.Level  =  1;
+[SQL ERROR] planet_1: What are the package contents of all those sent by John Zoidfarb?
+  gold:      SELECT T1.Contents FROM PACKAGE AS T1 JOIN Client AS T2 ON T1.Sender  =  T2.AccountNumber WHERE T2.Name  =  "John Zoidfarb";
+  predicted: SELECT T2.Contents FROM Package AS T1 JOIN Shipment AS T2 ON T2.Shipment = T1.Shipment WHERE T1.Sender = T3.Client AND T3.Name = "John Zoidfarb"
+[SQL ERROR] planet_1: What is the heaviest package sent by the clients which 'John' is part of their name? List package number and weight.
+  gold:      SELECT T1.PackageNumber ,  max(T1.Weight) FROM PACKAGE AS T1 JOIN Client AS T2 ON T1.Sender  =  T2.AccountNumber WHERE T2.Name LIKE "John";
+  predicted: SELECT DISTINCT t4.PackageNumber ,  t6.Weight FROM Has_Clearance AS t1 JOIN Customer AS t2 ON t1.Customer_Client_ID  =  t2.Client_Client_ID JOIN Customer_Position AS t3 ON t2.Position_Position_ID  =  t3.Position_Position_ID JOIN Employee AS t4 ON t3.Employee_Employee_ID  =  t4.Employee_Employee_ID JOIN Ref_to_Planet AS t5 ON t4.Position_Planet_ID  =  t5.Planet_Planet_ID JOIN Ref_to_Shipment AS t6 ON t5.Planet_Shipment_ID  =  t6.Shipment_Shipment_ID WHERE t2.Name  =  "John" AND t6.Weight  =  (SELECT max(Weight) FROM Ref_to_Package AS t7 JOIN Ref_to_Client AS t8 ON t7.Shipment_Client_ID  =  t8.Client_Client_ID AND t7.Shipment_Shipment_ID  =  t6.Shipment_Shipment_ID WHERE t8.Name  =
+[EXEC OK] planet_1: What is the package number and weight of the heaviest package that was sent by a client named John or something similar?
+  gold:      SELECT T1.PackageNumber ,  max(T1.Weight) FROM PACKAGE AS T1 JOIN Client AS T2 ON T1.Sender  =  T2.AccountNumber WHERE T2.Name LIKE "John";
+  predicted: SELECT t3.PackageNumber ,  t3.Weight FROM Package AS t3 JOIN       Client AS t1 ON t3.Recipient = t1.AccountNumber JOIN    Shipment AS t2 ON t2.ShipmentID = t3.Shipment WHERE t1.Name = "John" GROUP BY t3.Weight ORDER BY t3.Weight DESC LIMIT 1;
+[MATCH] planet_1: List package number and weight of top 3 lightest packages.
+  gold:      SELECT PackageNumber ,  Weight FROM PACKAGE ORDER BY Weight ASC LIMIT 3;
+  predicted: SELECT DISTINCT T1.PackageNumber ,  T1.Weight FROM Package AS T1 ORDER BY T1.Weight LIMIT 3;
+[MATCH] planet_1: What is the package number and weight of the 3 lightest packages?
+  gold:      SELECT PackageNumber ,  Weight FROM PACKAGE ORDER BY Weight ASC LIMIT 3;
+  predicted: SELECT PackageNumber ,  Weight FROM Package ORDER BY Weight ASC LIMIT 3
+[SQL ERROR] planet_1: Who sent most number of packages? List client name and number of packages sent by that client.
+  gold:      SELECT T2.Name ,  count(*) FROM PACKAGE AS T1 JOIN Client AS T2 ON T1.Sender  =  T2.AccountNumber GROUP BY T1.Sender ORDER BY count(*) DESC LIMIT 1;
+  predicted: SELECT T3.Name , T1.sent_count FROM (SELECT T2.f_client_number AS sent_count , T2.client_name FROM Customer_transactions AS T1 JOIN Clients AS T2 ON T1.client_number  =  T2.client_number WHERE T1.sent_date  =  (SELECT max(T3.sent_date) FROM Customer_transactions AS T1 JOIN Clients AS T2 ON T1.client_number  =  T2.client_number JOIN shipments AS T3 ON T3.shipment_id  =  T1.shipment_id) UNION SELECT T2.f_client_number AS sent_count , T2.client_name FROM Customer_transactions AS T1 JOIN Clients AS T2 ON T1.client_number  =  T2.client_number WHERE T1.sent_date  =  (SELECT max(T3.sent_date) FROM Customer_transactions AS T1 JOIN Clients AS T2 ON T1.client_number  =  T2.client_number JOIN shipments AS T3 ON T3.shipment_id  =  T1.shipment_id
+[SQL ERROR] planet_1: What is the name of the client who sent the most packages and how many were there?
+  gold:      SELECT T2.Name ,  count(*) FROM PACKAGE AS T1 JOIN Client AS T2 ON T1.Sender  =  T2.AccountNumber GROUP BY T1.Sender ORDER BY count(*) DESC LIMIT 1;
+  predicted: SELECT t2.Name ,  COUNT(*) FROM Customer_by_Shipment AS t1 JOIN Customer AS t2 ON t1.CustomerId  =  t2.CustomerId JOIN Package AS t3 ON t1.ShipmentID  =  t3.Shipment AND t2.CustomerId  =  t3.Sender GROUP BY t2.CustomerId ORDER BY COUNT(*) DESC LIMIT 1;
+[SQL ERROR] planet_1: Who received least number of packages ? List client name and number of packages received by that client .
+  gold:      select t2.name ,  count(*) from package as t1 join client as t2 on t1.recipient  =  t2.accountnumber group by t1.recipient order by count(*) limit 1;
+  predicted: SELECT DISTINCT T1.Name ,  COUNT(DISTINCT T2.PackageNumber) FROM Customer AS T1 JOIN       Package AS T2 ON T1.Client_ID  =  T2.Recipient_ID GROUP BY T1.Name ORDER BY COUNT(DISTINCT T2.PackageNumber) ASC;
+[SQL ERROR] planet_1: What is the smallest number of packages received and by whom ?
+  gold:      select t2.name ,  count(*) from package as t1 join client as t2 on t1.recipient  =  t2.accountnumber group by t1.recipient order by count(*) limit 1;
+  predicted: SELECT t1.Package_Number ,  t2.Employee_Name FROM Customer_Package_Mailed AS t1 JOIN Employee AS t2 ON t1.Mailed_by  =  t2.Employee_ID GROUP BY T1.Package_Number ORDER BY COUNT(*) ASC LIMIT 1
+[EXEC OK] planet_1: Who sent more than one packages? List the client's name.
+  gold:      SELECT T2.Name ,  count(*) FROM PACKAGE AS T1 JOIN Client AS T2 ON T1.Sender  =  T2.AccountNumber GROUP BY T1.Sender HAVING count(*)  >  1;
+  predicted: SELECT T1.Name FROM Client AS T1 JOIN Package AS T2 ON T1.AccountNumber = T2.Sender GROUP BY T1.Name HAVING COUNT(*)  >  1
+[EXEC OK] planet_1: What is the name of all clients who sent more than one package?
+  gold:      SELECT T2.Name ,  count(*) FROM PACKAGE AS T1 JOIN Client AS T2 ON T1.Sender  =  T2.AccountNumber GROUP BY T1.Sender HAVING count(*)  >  1;
+  predicted: SELECT t1.Name FROM Client AS t1 JOIN Package AS t2 ON t2.Shipment  =  t1.AccountNumber GROUP BY t1.Name HAVING COUNT(*)  >  1
+[MATCH] planet_1: What are the Coordinates of planet Mars?
+  gold:      SELECT Coordinates FROM Planet WHERE Name  =  "Mars";
+  predicted: SELECT Coordinates FROM Planet WHERE Name  =  "Mars"
+[SQL ERROR] planet_1: What are the coordinates of the planet named Mars?
+  gold:      SELECT Coordinates FROM Planet WHERE Name  =  "Mars";
+  predicted: SELECT t3.Coordinates FROM Has_Clearance AS t1 JOIN Clients AS t2 ON t1.Client_id = t2.Client_ID JOIN Planets AS t3 ON t1.Planet_ID = t3.Planet_ID WHERE t2.Client_Name = "Mars"
+[MATCH] planet_1: List all Planets' names and coordinates in alphabetical order of name.
+  gold:      SELECT Name ,  Coordinates FROM Planet ORDER BY Name
+  predicted: SELECT Name ,  Coordinates FROM Planet ORDER BY Name
+[MATCH] planet_1: What are the names and coordinates of all planets in alphabetical order by name?
+  gold:      SELECT Name ,  Coordinates FROM Planet ORDER BY Name
+  predicted: SELECT Name ,  Coordinates FROM Planet ORDER BY Name ASC
+[SQL ERROR] planet_1: List all shipment id under Phillip J. Fry's management.
+  gold:      SELECT T1.ShipmentID FROM Shipment AS T1 JOIN Employee AS T2 ON T1.Manager = T2.EmployeeID WHERE T2.Name = "Phillip J. Fry";
+  predicted: SELECT DISTINCT s.ShipmentID FROM Staff AS T1 JOIN Customer AS T2 ON T1.CustomerId = T2.CustomerId JOIN    Shipment AS T3 ON T3.Manager = T1.staffid WHERE T2.customername = " Phillip J. Fry"
+[SQL ERROR] planet_1: What are the shipment IDs of every delivery managed by Phillip J Fry?
+  gold:      SELECT T1.ShipmentID FROM Shipment AS T1 JOIN Employee AS T2 ON T1.Manager = T2.EmployeeID WHERE T2.Name = "Phillip J. Fry";
+  predicted: SELECT DISTINCT T1.ShipmentID FROM Customer AS T2 JOIN Delivery AS T1 ON T2.CustomerId = T1.DeliveryCustomerId WHERE T2.customerName = " Phillip J Fry" AND T1.DeliveryStatus = "Delivered"
+[MATCH] planet_1: List the dates of all shipments.
+  gold:      SELECT Date FROM Shipment;
+  predicted: SELECT Date FROM Shipment;
+[MATCH] planet_1: What are the dates of every shipment in the database?
+  gold:      SELECT Date FROM Shipment;
+  predicted: SELECT date FROM shipment;
+[SQL ERROR] planet_1: List all shipment ids for the planet Mars.
+  gold:      SELECT T1.ShipmentID FROM Shipment AS T1 JOIN Planet AS T2 ON T1.Planet = T2.PlanetID WHERE T2.Name  =  "Mars";
+  predicted: SELECT T1.ShipmentID FROM shipments AS T1 JOIN planets AS T2 ON T1.Planet = T2.PlanetID WHERE T2.Name = " Mars";
+[EXEC OK] planet_1: What are the shipment ids for the planet Mars?
+  gold:      SELECT T1.ShipmentID FROM Shipment AS T1 JOIN Planet AS T2 ON T1.Planet = T2.PlanetID WHERE T2.Name  =  "Mars";
+  predicted: SELECT DISTINCT T1.ShipmentID FROM         Shipment AS T1 JOIN Planet AS T2 ON T1.Planet = T2.PlanetID WHERE T2.Name = " Mars";
+[SQL ERROR] planet_1: List all shipment ids for the planet Mars and under the management of Turanga Leela.
+  gold:      SELECT T1.ShipmentID FROM Shipment AS T1 JOIN Planet AS T2 ON T1.Planet = T2.PlanetID JOIN Employee AS T3 ON T3.EmployeeID = T1.Manager WHERE T2.Name = "Mars" AND T3.Name = "Turanga Leela";
+  predicted: SELECT T2.ShipmentID FROM Has_Clearance AS T1 JOIN Customer AS T2 ON T1.Client  =  T2.Client_ID WHERE T2.Planet = "Mars" AND T2.Manager = 100;
+[SQL ERROR] planet_1: What are the ids of all shipments on the planet Mars that are managed by Turanga Leela?
+  gold:      SELECT T1.ShipmentID FROM Shipment AS T1 JOIN Planet AS T2 ON T1.Planet = T2.PlanetID JOIN Employee AS T3 ON T3.EmployeeID = T1.Manager WHERE T2.Name = "Mars" AND T3.Name = "Turanga Leela";
+  predicted: SELECT T1.ShipmentID FROM Turanga_Leela AS T1 JOIN shipment AS T2 ON T1.Manager = T2.Manager JOIN planet AS T3 ON T3.PlanetID = T2.PlanetID WHERE T3.Name = "Mars" AND T2.Manager = Turanga_Leela;
+[SQL ERROR] planet_1: List all shipment ids on the planet Mars or under the management of Turanga Leela.
+  gold:      SELECT T1.ShipmentID FROM Shipment AS T1 JOIN Planet AS T2 ON T1.Planet = T2.PlanetID JOIN Employee AS T3 ON T3.EmployeeID = T1.Manager WHERE T2.Name = "Mars" OR T3.Name = "Turanga Leela";
+  predicted: SELECT T1.ShipmentID FROM Turanga_Leela_and_Other_info AS T1 JOIN shipments AS T2 ON T1.Shipment = T2.ShipmentID WHERE T2.Planet = "Mars" OR T2.Manager = "Turanga Leela"
+[SQL ERROR] planet_1: What are the ids for all shipments on the planet Mars that Turanga Leela manages?
+  gold:      SELECT T1.ShipmentID FROM Shipment AS T1 JOIN Planet AS T2 ON T1.Planet = T2.PlanetID JOIN Employee AS T3 ON T3.EmployeeID = T1.Manager WHERE T2.Name = "Mars" OR T3.Name = "Turanga Leela";
+  predicted: SELECT DISTINCT T1.ShipmentID FROM Turanga_Leela AS T1 JOIN Staff AS T2 ON T1.Manager = T2.Client_ID WHERE T2.Position = "Head of Customer Service" AND T2.Planet_ID = 3
+[SQL ERROR] planet_1: What is the total shipments in each planet? List the planet name and total shipments.
+  gold:      SELECT T2.Name ,  count(*) FROM Shipment AS T1 JOIN Planet AS T2 ON T1.Planet = T2.PlanetID GROUP BY T1.Planet;
+  predicted: SELECT p.Name ,    sum(T1.Shipment) FROM Planet AS p JOIN Shipment AS T1 ON T1.Planet = p.PlanetID GROUP BY T1.Planet
+[EXEC OK] planet_1: How many shipments take place on each planet?
+  gold:      SELECT T2.Name ,  count(*) FROM Shipment AS T1 JOIN Planet AS T2 ON T1.Planet = T2.PlanetID GROUP BY T1.Planet;
+  predicted: SELECT count(DISTINCT T1.ShipmentID) ,  T2.Name FROM Planet AS T2 JOIN  Shipment AS T1 ON T1.Planet = T2.PlanetID GROUP BY T1.Planet
+[SQL ERROR] planet_1: Which planet has most shipments? List the planet name.
+  gold:      SELECT T2.Name FROM Shipment AS T1 JOIN Planet AS T2 ON T1.Planet = T2.PlanetID GROUP BY T1.Planet ORDER BY count(*) DESC LIMIT 1;
+  predicted: SELECT t2.Name FROM Planet AS t1 JOIN Shipment AS t2 ON t1.PlanetID  =  t2.Planet GROUP BY t2.Planet HAVING COUNT(*)  =  (SELECT max(COUNT(*) ) FROM shipment)
+[SQL ERROR] planet_1: What is the name of the planet with the most shipments?
+  gold:      SELECT T2.Name FROM Shipment AS T1 JOIN Planet AS T2 ON T1.Planet = T2.PlanetID GROUP BY T1.Planet ORDER BY count(*) DESC LIMIT 1;
+  predicted: SELECT T1.Name FROM Planet AS T1 JOIN      Shipment AS T2 ON T1.PlanetID = T2.Planet JOIN  Client AS T3 ON T2.Manager = T3.Client JOIN     Package AS T4 ON T2.Shipment = T4.Shipment JOIN         Client AS T5 ON T4.Sender = T5.Client JOIN      Client AS T6 ON T4.Recipient GROUP BY T1.Name ORDER BY COUNT(*) DESC LIMIT 1
+[MATCH] planet_1: List the manger's name and number of shipments under his management.
+  gold:      SELECT T2.Name ,  count(*) FROM Shipment AS T1 JOIN Employee AS T2 ON T1.Manager = T2.EmployeeID GROUP BY T1.Manager;
+  predicted: SELECT t1.Name ,  COUNT(*) FROM Employee AS t1 JOIN Shipment AS t2 ON t1.EmployeeID  =  t2.Manager JOIN Planet AS t3 ON t3.PlanetID  =  t2.Planet GROUP BY t2.Manager ORDER BY COUNT(*) DESC;
+[SQL ERROR] planet_1: What are the number of shipments managed and names of each manager?
+  gold:      SELECT T2.Name ,  count(*) FROM Shipment AS T1 JOIN Employee AS T2 ON T1.Manager = T2.EmployeeID GROUP BY T1.Manager;
+  predicted: SELECT T1.manager_id ,  T2.name FROM shipments AS T1 JOIN employee AS T2 ON T1.manager_id = T2.employee_id GROUP BY T1.manager_id;
+[SQL ERROR] planet_1: Calculate total weight of package shipped on Mars.
+  gold:      SELECT sum(T1.Weight) FROM PACKAGE AS T1 JOIN Shipment AS T2 ON T1.Shipment = T2.ShipmentID JOIN Planet AS T3 ON T2.Planet = T3.PlanetID WHERE T3.Name = "Mars";
+  predicted: SELECT SUM (Weight) FROM Package WHERE Planet  =  (SELECT PlanetID FROM Shipment WHERE Date LIKE "Mars")
+[SQL ERROR] planet_1: what is the total weight of all packages shipped on Mars?
+  gold:      SELECT sum(T1.Weight) FROM PACKAGE AS T1 JOIN Shipment AS T2 ON T1.Shipment = T2.ShipmentID JOIN Planet AS T3 ON T2.Planet = T3.PlanetID WHERE T3.Name = "Mars";
+  predicted: SELECT SUM(T1.Weight) FROM Ref_Shipment AS T1 JOIN Planet AS T2 ON T1.Manager = T2.Planet JOIN Package AS T3 ON T1.Shipment = T3.ShipmentID WHERE T2.Name = "Mars"
+[SQL ERROR] planet_1: Calculate total weight of package shipped in each planet . show the name of each planet .
+  gold:      select t3.name ,  sum(t1.weight) from package as t1 join shipment as t2 on t1.shipment = t2.shipmentid join planet as t3 on t2.planet = t3.planetid group by t2.planet;
+  predicted: SELECT T3.Name ,  sum(T2.Weight) FROM      Package AS T1 JOIN      Shipment AS T2 ON T1.Shipment = T2.ShipmentID JOIN      Planet AS T3 ON T2.Planet = T3.PlanetID GROUP BY T3.Name;
+[SQL ERROR] planet_1: what is the total package weight for each planet, list its name ?
+  gold:      select t3.name ,  sum(t1.weight) from package as t1 join shipment as t2 on t1.shipment = t2.shipmentid join planet as t3 on t2.planet = t3.planetid group by t2.planet;
+  predicted: SELECT T2.Name ,  sum(T1.Weight) FROM Planet AS T1 JOIN    Shipment AS T2 ON T1.Planet  =  T2.Planet WHERE         T1.Planet IN ( SELECT T3.Planet FROM Has_ Clearances AS T4 JOIN         Shipment AS T2 ON T4.Shipment  =  T2.ShipmentID JOIN    Client AS T3 ON T4.Client  =  T3.Client WHERE T3.Name = "Client_name" );
+[SQL ERROR] planet_1: Which planet has total weight of shipment greater than 30? List planet name.
+  gold:      SELECT T3.Name FROM PACKAGE AS T1 JOIN Shipment AS T2 ON T1.Shipment = T2.ShipmentID JOIN Planet AS T3 ON T2.Planet = T3.PlanetID GROUP BY T2.Planet HAVING sum(T1.Weight)  >  30;
+  predicted: SELECT Name FROM Planet AS p JOIN 30 LIMIT 1;
+[SQL ERROR] planet_1: What are the names of all planets tjat have a total shipment weight greater than 30?
+  gold:      SELECT T3.Name FROM PACKAGE AS T1 JOIN Shipment AS T2 ON T1.Shipment = T2.ShipmentID JOIN Planet AS T3 ON T2.Planet = T3.PlanetID GROUP BY T2.Planet HAVING sum(T1.Weight)  >  30;
+  predicted: SELECT t3.Name FROM Planet AS t1 JOIN      Shipment AS t2 ON t1.PlanetID = t2.Planet JOIN  Client AS t3 ON t2.Manager = t3.Client WHERE sum(t2.Weight) > 30 GROUP BY t3.Name
+[SQL ERROR] planet_1: List package number of package shipped in planet Omicron Persei 8 and sent by Zapp Brannigan.
+  gold:      SELECT T1.PackageNumber FROM PACKAGE AS T1 JOIN Client AS T2 ON  T1.Sender = T2.AccountNumber JOIN Shipment AS T3 ON T1.Shipment = T3.ShipmentID JOIN Planet AS T4 ON T3.Planet = T4.PlanetID WHERE T2.Name = "Zapp Brannigan" AND T4.Name = "Omicron Persei 8";
+  predicted: SELECT T3.PackageNumber FROM Has_Clearance AS T1 JOIN Customer AS T2 ON T1.Customer = T2.CustomerId JOIN Shipment AS T3 ON T1.Shipment = T3.ShipmentID WHERE T2.Name = "ZappBrannigan" AND T3.Planet = 8 AND T3.Date  = "null"
+[SQL ERROR] planet_1: What are the number of packages sent by Zapp Brannigan and shipped on the Omicron Persei 8?
+  gold:      SELECT T1.PackageNumber FROM PACKAGE AS T1 JOIN Client AS T2 ON  T1.Sender = T2.AccountNumber JOIN Shipment AS T3 ON T1.Shipment = T3.ShipmentID JOIN Planet AS T4 ON T3.Planet = T4.PlanetID WHERE T2.Name = "Zapp Brannigan" AND T4.Name = "Omicron Persei 8";
+  predicted: SELECT count(*) FROM Package AS T1 JOIN Shipment AS T2 ON T1.Shipment = T2.ShipmentID JOIN Has_Clearance AS T3 ON T2.Shipment = T3.ShipmentID JOIN Employee AS T4 ON T4.EmployeeID = T3.Employee WHERE T4.Name = "ZappBrannigan" AND T2.Planet = 8 AND T3.Level = 3;
+[SQL ERROR] planet_1: List package number of packages shipped in Omicron Persei 8 planet or sent by Zapp Brannigan.
+  gold:      SELECT T1.PackageNumber FROM PACKAGE AS T1 JOIN Client AS T2 ON  T1.Sender = T2.AccountNumber JOIN Shipment AS T3 ON T1.Shipment = T3.ShipmentID JOIN Planet AS T4 ON T3.Planet = T4.PlanetID WHERE T2.Name  =  "Zapp Brannigan" OR T4.Name  =  "Omicron Persei 8";
+  predicted: SELECT t2.PackageNumber FROM Planet AS t3 JOIN Shipment AS t1 ON t3.Planet = t1.Planet JOIN Has_Clearance AS t5 ON T1.ShipmentID = t5.Shipment AND T5.Level  = 0 JOIN Customer AS t4 ON T1.Manager = t4.Client AND T4.Name = "ZappBrannigan" WHERE T3.Name = " Omicron Persei 8" GROUP BY T2.PackageNumber;
+[SQL ERROR] planet_1: What are the number of packages shipped on Omicron Persei 8 planet or sent by Zapp Brannigan?
+  gold:      SELECT T1.PackageNumber FROM PACKAGE AS T1 JOIN Client AS T2 ON  T1.Sender = T2.AccountNumber JOIN Shipment AS T3 ON T1.Shipment = T3.ShipmentID JOIN Planet AS T4 ON T3.Planet = T4.PlanetID WHERE T2.Name  =  "Zapp Brannigan" OR T4.Name  =  "Omicron Persei 8";
+  predicted: SELECT count(*) FROM Package WHERE destination = "15" AND origin = "9" AND sender = 3;
+[MATCH] planet_1: Which packages have weight between 10 and 30? List the package number and weight.
+  gold:      SELECT PackageNumber ,  Weight FROM PACKAGE WHERE Weight BETWEEN 10 AND 30;
+  predicted: SELECT DISTINCT T1.PackageNumber , T1.Weight FROM Package AS T1 JOIN Shipment AS T2 ON T1.Shipment = T2.ShipmentID WHERE T1.Weight BETWEEN 10 AND 30
+[MATCH] planet_1: What are the package numbers and weights that are between 10 and 30?
+  gold:      SELECT PackageNumber ,  Weight FROM PACKAGE WHERE Weight BETWEEN 10 AND 30;
+  predicted: SELECT PackageNumber ,  Weight FROM Package WHERE Weight BETWEEN 10 AND 30;
+[EXEC OK] planet_1: Which employees do not have clearance in Mars? List employee's name.
+  gold:      SELECT Name FROM Employee EXCEPT SELECT T2.Name FROM Has_Clearance AS T1 JOIN Employee AS T2 ON T1.Employee = T2.EmployeeID JOIN Planet AS T3 ON T1.Planet = T3.PlanetID WHERE T3.Name = "Mars";
+  predicted: SELECT T2.Name FROM Has_Clearance AS T1 JOIN Employee AS T2 ON T1.Employee  =  T2.EmployeeID JOIN Planet AS T3 ON T1.Planet  =  T3.PlanetID WHERE T3.Name  =  "Mars" EXCEPT SELECT T2.Name FROM Has_Clearance AS T1 JOIN Employee AS T2 ON T1.Employee  =  T2.EmployeeID JOIN Planet AS T3 ON T1.Planet  =  T3.PlanetID WHERE T3.Name  =  "Mars"
+[SQL ERROR] planet_1: What are the names of all employees who don't have clearance on Mars?
+  gold:      SELECT Name FROM Employee EXCEPT SELECT T2.Name FROM Has_Clearance AS T1 JOIN Employee AS T2 ON T1.Employee = T2.EmployeeID JOIN Planet AS T3 ON T1.Planet = T3.PlanetID WHERE T3.Name = "Mars";
+  predicted: SELECT Name FROM Employee EXCEPT SELECT Name FROM Has_Clearance WHERE Planet  =  "Mars";
+[SQL ERROR] planet_1: Which employees have clearance in Omega III? List employees' name.
+  gold:      SELECT T2.Name FROM Has_Clearance AS T1 JOIN Employee AS T2 ON T1.Employee = T2.EmployeeID JOIN Planet AS T3 ON T1.Planet = T3.PlanetID WHERE T3.Name  =  "Omega III";
+  predicted: SELECT T1.Name FROM Has_Clearance AS T1 JOIN Employee AS T2 ON T1.Employee  =  T2.EmployeeID JOIN Planet AS T3 ON T1.Planet  =  T3.PlanetID WHERE T3.Name  =  "Omega III"
+[SQL ERROR] planet_1: What are the names of all employees with clearance on Omega III?
+  gold:      SELECT T2.Name FROM Has_Clearance AS T1 JOIN Employee AS T2 ON T1.Employee = T2.EmployeeID JOIN Planet AS T3 ON T1.Planet = T3.PlanetID WHERE T3.Name  =  "Omega III";
+  predicted: SELECT T1.Name FROM Has_Clearance AS T1 JOIN Employee AS T2 ON T1.Employee  =  T2.EmployeeID JOIN Planet AS T3 ON T3.PlanetID  =  T1.Planet WHERE T3.Name  =  "Omega III"
+[SQL ERROR] planet_1: Which planets that have exact one employee has clearance? List planets' name.
+  gold:      SELECT T3.Name FROM Has_Clearance AS T1 JOIN Employee AS T2 ON T1.Employee = T2.EmployeeID JOIN Planet AS T3 ON T1.Planet = T3.PlanetID GROUP BY T1.Planet HAVING count(*)  =  1;
+  predicted: SELECT DISTINCT t3.Name FROM Employee AS t1 JOIN Has_Clearance AS t2 ON t1.Employee  =  t2.Employee JOIN Planet AS t3 ON t2.Planet  =  t3.PlanetID WHERE t2.Level  =  1 GROUP BY t3.Name HAVING COUNT(*)  =  1;
+[SQL ERROR] planet_1: What are the names of all planets with one employee that has clearance?
+  gold:      SELECT T3.Name FROM Has_Clearance AS T1 JOIN Employee AS T2 ON T1.Employee = T2.EmployeeID JOIN Planet AS T3 ON T1.Planet = T3.PlanetID GROUP BY T1.Planet HAVING count(*)  =  1;
+  predicted: SELECT name FROM Planet WHERE PlanetID IN (SELECT DISTINCT T2.Planet FROM Has_Clearance AS T1 JOIN Employee AS T2 ON T1.Employee  =  T2.EmployeeID WHERE T1.Level != 1)
+[MATCH] planet_1: Which employees have salaries between 5000 and 10000? List employees' name.
+  gold:      SELECT Name FROM Employee WHERE Salary BETWEEN 5000 AND 10000
+  predicted: SELECT Name FROM Employee WHERE salary BETWEEN 5000 AND 10000;
+[MATCH] planet_1: What are the employees's names for those that have salaries between 5000 and 10000?
+  gold:      SELECT Name FROM Employee WHERE Salary BETWEEN 5000 AND 10000
+  predicted: SELECT Name FROM Employee WHERE salary BETWEEN 5000 AND 10000
+[MATCH] planet_1: Find the name of employees whose salary is above the average salary or more than 5000.
+  gold:      SELECT Name FROM Employee WHERE Salary  >  5000 OR Salary  >  (SELECT avg(salary) FROM employee)
+  predicted: SELECT Name FROM Employee WHERE salary  >  (SELECT avg(salary) FROM Employee) OR salary  >  5000
+[MATCH] planet_1: What are the names of all employees who have a salary greater than average or more than 5000?
+  gold:      SELECT Name FROM Employee WHERE Salary  >  5000 OR Salary  >  (SELECT avg(salary) FROM employee)
+  predicted: SELECT Name FROM Employee WHERE salary  >  (SELECT avg(salary) FROM Employee) OR salary  >  5000
+[SQL ERROR] planet_1: Find the number of employees who do not have clearance in Mars .
+  gold:      select count(*) from employee where employeeid not in ( select t2.employeeid from has_clearance as t1 join employee as t2 on t1.employee = t2.employeeid join planet as t3 on t1.planet = t3.planetid where t3.name = "mars" );
+  predicted: SELECT count(DISTINCT eid) FROM Has_Clearance WHERE pName  =  "Mars" EXCEPT SELECT count(DISTINCT eid) FROM Has_Clearance WHERE pName  =  "Mars"
+[SQL ERROR] planet_1: What is the number of employees that do not have clearance on Mars ?
+  gold:      select count(*) from employee where employeeid not in ( select t2.employeeid from has_clearance as t1 join employee as t2 on t1.employee = t2.employeeid join planet as t3 on t1.planet = t3.planetid where t3.name = "mars" );
+  predicted: SELECT count(*) FROM Has_Clearance AS T1 JOIN Employee AS T2 ON T1.Employee  =  T2.EmployeeID JOIN Planet AS T3 ON T1.Planet  =  T3.PlanetID WHERE T3.Name  =  " Mars" EXCEPT SELECT T1.Team FROM Has_Clearance AS T1 JOIN Employee AS T2 ON T1.Employee  =  T2.EmployeeID JOIN Planet AS T3 ON T1.Planet  =  T3.PlanetID WHERE T3.Name  =  " Mars"
+[MATCH] video_game: How many games are there?
+  gold:      SELECT count(*) FROM game
+  predicted: SELECT COUNT(*) FROM game;
+[MATCH] video_game: Count the number of games.
+  gold:      SELECT count(*) FROM game
+  predicted: SELECT count(*) FROM game
+[MATCH] video_game: List the Title and Developers of all games ordered by units sold from large to small.
+  gold:      SELECT Title ,  Developers FROM game ORDER BY Units_sold_Millions DESC
+  predicted: SELECT g.Title ,  g.Developers FROM game AS g ORDER BY g.Units_sold_Millions DESC;
+[SQL ERROR] video_game: What are the titles and developers of all games, sorted by units sold descending?
+  gold:      SELECT Title ,  Developers FROM game ORDER BY Units_sold_Millions DESC
+  predicted: SELECT T1.Title ,  T2.Developers FROM game AS T1 JOIN game_player AS T2 ON T1.Game_ID = T2.Game_ID ORDER BY T2.Units_sold_Millions DESC
+[SQL ERROR] video_game: What is the average units sold in millions of the games that are not developed by Nintendo?
+  gold:      SELECT avg(Units_sold_Millions) FROM game WHERE developers != 'Nintendo'
+  predicted: SELECT avg(T2.Units_sold_Millions) FROM game AS T1 JOIN player_game AS T2 ON T1.Game_ID = T2.Game_ID JOIN player AS T3 ON T2.Player_ID = T3.Player_ID WHERE T3.College != "Nintendo"
+[SQL ERROR] video_game: Return the average number of units sold in millions for games not developed by Nintendo.
+  gold:      SELECT avg(Units_sold_Millions) FROM game WHERE developers != 'Nintendo'
+  predicted: SELECT avg(T2.Units_sold_Millions) FROM game AS T1 JOIN player_game AS T2 ON T1.Game_ID = T2.Game_ID WHERE T1.Developer != "Nintendo"
+[MATCH] video_game: What are the names and market districts of all platforms?
+  gold:      SELECT Platform_name ,  Market_district FROM platform
+  predicted: SELECT t1.Platform_name ,  t1.Market_district FROM platform AS t1
+[SQL ERROR] video_game: Return all platform names and corresponding market districts.
+  gold:      SELECT Platform_name ,  Market_district FROM platform
+  predicted: SELECT T1.Platform_name ,  T2.Market_district FROM platform AS T1 JOIN game AS T2 ON T1.Platform_ID = T2.Platform_ID;
+[SQL ERROR] video_game: What are the names and id of platforms whose download rank is 1?
+  gold:      SELECT Platform_name ,  Platform_ID FROM platform WHERE Download_rank  =  1
+  predicted: SELECT t1.Platform_name ,  t1.Platform_ID FROM platform AS t1 JOIN game AS t2 ON t1.Platform_ID  =  t2.Platform_ID WHERE t2.Download_rank = 1 ORDER BY t2.Download_rank LIMIT 1;
+[SQL ERROR] video_game: Return the names and ids of all platforms with the download rank of 1.
+  gold:      SELECT Platform_name ,  Platform_ID FROM platform WHERE Download_rank  =  1
+  predicted: SELECT t1.Platform_name ,  t1.Platform_ID FROM  platform AS t1 JOIN game AS t2 ON t1.Platform_ID  =  t2.Platform_ID WHERE t2.Download_rank  =  1;
+[SQL ERROR] video_game: What are the maximum and minimum rank of the year of players.
+  gold:      SELECT max(Rank_of_the_year) ,  min(Rank_of_the_year) FROM player
+  predicted: SELECT max(rank_of_year) ,  min(rank_of_year) FROM player
+[SQL ERROR] video_game: Give the maximum and minimum rank of the year across all players.
+  gold:      SELECT max(Rank_of_the_year) ,  min(Rank_of_the_year) FROM player
+  predicted: SELECT max(rank_of_year) ,  min(rank_of_year) FROM player;
+[SQL ERROR] video_game: How many players have rank of the year smaller than 3?
+  gold:      SELECT count(*) FROM player WHERE Rank_of_the_year  <=  3
+  predicted: SELECT count(*) FROM player WHERE rank_of_year  <  3
+[MATCH] video_game: Count the number of players that have a rank of year of at most 3.
+  gold:      SELECT count(*) FROM player WHERE Rank_of_the_year  <=  3
+  predicted: SELECT count(*) FROM player WHERE Rank_of_the_year  <=  3
+[MATCH] video_game: List all player names in ascending alphabetical order.
+  gold:      SELECT Player_name FROM player ORDER BY Player_name ASC
+  predicted: SELECT p1.Player_name FROM player AS p1 ORDER BY p1.Player_name ASC
+[MATCH] video_game: What are the names of all players in alphabetical order?
+  gold:      SELECT Player_name FROM player ORDER BY Player_name ASC
+  predicted: SELECT Player_name FROM player ORDER BY Player_name
+[SQL ERROR] video_game: List names and colleges of all players in descending order of rank of the year.
+  gold:      SELECT Player_name ,  College FROM player ORDER BY Rank_of_the_year DESC
+  predicted: SELECT p1.Player_name ,  p1.College FROM player AS p1 ORDER BY p1.Rank_of_year DESC
+[SQL ERROR] video_game: What are the names and colleges of all players, ordered by rank of year descending?
+  gold:      SELECT Player_name ,  College FROM player ORDER BY Rank_of_the_year DESC
+  predicted: SELECT p1.player_name ,  p1.College FROM player AS p1 JOIN game_player AS g1 ON p1.Player_ID = g1.Player_ID JOIN game AS g2 ON g1.Game_ID = g2.Game_ID ORDER BY g2.Rank_of_year DESC
+[SQL ERROR] video_game: Please show the names and rank of players that have played the game titled "Super Mario World".
+  gold:      SELECT T3.Player_name ,  T3.rank_of_the_year FROM game AS T1 JOIN game_player AS T2 ON T1.Game_ID  =  T2.Game_ID JOIN player AS T3 ON T2.Player_ID  =  T3.Player_ID WHERE T1.Title  =  "Super Mario World"
+  predicted: SELECT T1.Player_name ,  T1.rank_of_year FROM player AS T1 JOIN game_player AS T2 ON T1.player_id = T2.player_id JOIN game AS T3 ON T2.game_id = T3.game_id WHERE T3.Title = "super m writeweek" ORDER BY T2.active DESC
+[SQL ERROR] video_game: What are the names and ranks of players who have played the game with the title "Super Mario World"?
+  gold:      SELECT T3.Player_name ,  T3.rank_of_the_year FROM game AS T1 JOIN game_player AS T2 ON T1.Game_ID  =  T2.Game_ID JOIN player AS T3 ON T2.Player_ID  =  T3.Player_ID WHERE T1.Title  =  "Super Mario World"
+  predicted: SELECT T1.Player_name , T1.Rank_of_year FROM game_player AS T1 JOIN player AS T2 ON T1.Player_ID = T2.Player_ID JOIN game AS T3 ON T1.Game_ID = T3.Game_ID WHERE T3.Title = "Super Mario World"
+[MATCH] video_game: Show the distinct developer of games played by players that go to college "Auburn".
+  gold:      SELECT DISTINCT T1.Developers FROM game AS T1 JOIN game_player AS T2 ON T1.Game_ID  =  T2.Game_ID JOIN player AS T3 ON T2.Player_ID  =  T3.Player_ID WHERE T3.College  =  "Auburn"
+  predicted: SELECT DISTINCT T1.Developers FROM game AS T1 JOIN game_player AS T2 ON T1.Game_ID = T2.Game_ID JOIN player AS T3 ON T2.Player_ID = T3.Player_ID WHERE T3.College = "Auburn"
+[EXEC OK] video_game: What are the different developers of games that are played by players that attend Auburn college?
+  gold:      SELECT DISTINCT T1.Developers FROM game AS T1 JOIN game_player AS T2 ON T1.Game_ID  =  T2.Game_ID JOIN player AS T3 ON T2.Player_ID  =  T3.Player_ID WHERE T3.College  =  "Auburn"
+  predicted: SELECT DISTINCT T1.Developers FROM game AS T1 JOIN game_player AS T2 ON T1.Game_ID = T2.Game_ID JOIN player AS T3 ON T2.Player_ID = T3.Player_ID WHERE T3.College = "Aub."
+[MATCH] video_game: What is the average number of units sold in millions of games played by players with position "Guard"?
+  gold:      SELECT avg(Units_sold_Millions) FROM game AS T1 JOIN game_player AS T2 ON T1.Game_ID  =  T2.Game_ID JOIN player AS T3 ON T2.Player_ID  =  T3.Player_ID WHERE T3.Position  =  "Guard"
+  predicted: SELECT avg(T1.Units_sold_Millions) FROM game AS T1 JOIN game_player AS T2 ON T1.Game_ID = T2.Game_ID JOIN player AS T3 ON T2.Player_ID = T3.Player_ID WHERE T3.Position = "Guard"
+[SQL ERROR] video_game: Return the average number of units sold in millions among games played by players who have the position Guard.
+  gold:      SELECT avg(Units_sold_Millions) FROM game AS T1 JOIN game_player AS T2 ON T1.Game_ID  =  T2.Game_ID JOIN player AS T3 ON T2.Player_ID  =  T3.Player_ID WHERE T3.Position  =  "Guard"
+  predicted: SELECT avg(T2.Units_sold_Millions) FROM game AS T1 JOIN game_player AS T3 ON T1.Game_ID = T3.Game_ID JOIN player AS T2 ON T3.Player_ID = T2.Player_ID WHERE T2.Position = " Guard"
+[MATCH] video_game: Please list the title and platform name of games.
+  gold:      SELECT T1.Title ,  T2.Platform_name FROM game AS T1 JOIN platform AS T2 ON T1.Platform_ID  =  T2.Platform_ID
+  predicted: SELECT g.Title ,  T2.Platform_name FROM game AS g JOIN platform AS T2 ON g.Platform_ID = T2.Platform_ID
+[MATCH] video_game: What are the titles and platform names of all games?
+  gold:      SELECT T1.Title ,  T2.Platform_name FROM game AS T1 JOIN platform AS T2 ON T1.Platform_ID  =  T2.Platform_ID
+  predicted: SELECT g.Title ,  T2.Platform_name FROM game AS g JOIN platform AS T2 ON g.Platform_ID = T2.Platform_ID;
+[SQL ERROR] video_game: Please list the title of games with platforms that have market district in Asia or USA.
+  gold:      SELECT T1.Title FROM game AS T1 JOIN platform AS T2 ON T1.Platform_ID  =  T2.Platform_ID WHERE T2.Market_district  =  "Asia" OR T2.Market_district  =  "USA"
+  predicted: SELECT title FROM game WHERE First_App_Date LIKE "%Asia%" UNION SELECT title FROM game WHERE First_App_Date LIKE "%USA%"
+[SQL ERROR] video_game: What are the titles of games that have platforms in the market districts of Asia or the USA?
+  gold:      SELECT T1.Title FROM game AS T1 JOIN platform AS T2 ON T1.Platform_ID  =  T2.Platform_ID WHERE T2.Market_district  =  "Asia" OR T2.Market_district  =  "USA"
+  predicted: SELECT T2.Title FROM game AS T1 JOIN platform AS T2 ON T1.Platform_ID = T2.Platform_ID WHERE T2.Market_district IN ( SELECT T3.Market_district FROM market_district AS T3 JOIN game AS T1 ON T3.Market_District_ID = T1.Market_District_ID WHERE T3.region_code = "Asia" UNION SELECT T3.Market_district FROM market_district AS T3 JOIN game AS T1 ON T3.Market_District_ID = T1.Market_District_ID WHERE T3.region_code = "USA" ) AND T2.Platform_name = "USA" AND T1.active = 1;
+[SQL ERROR] video_game: List the name of each franchise and the number of games belonging to that franchise.
+  gold:      SELECT Franchise ,  COUNT(*) FROM game GROUP BY Franchise
+  predicted: SELECT F1.D1 ,  COUNT(*) FROMfranchise F1 JOINgame_franchise T1 ON F1.F2  =  T1.franchise_ID JOINgame T2 ON T1.game_ID = T2.game_ID GROUP BY T1.franchise_ID;
+[SQL ERROR] video_game: How many games are there from each Franchise?
+  gold:      SELECT Franchise ,  COUNT(*) FROM game GROUP BY Franchise
+  predicted: SELECT count(*) ,  T1.Franchise FROM game AS T1 JOIN player_game AS T2 ON T2.Game_ID = T1.Game_ID JOIN player AS T3 ON T3.Player_ID = T2.Player_ID GROUP BY T1.Franchise;
+[SQL ERROR] video_game: List the name of franchise that have the most number of games.
+  gold:      SELECT Franchise FROM game GROUP BY Franchise ORDER BY COUNT(*) DESC LIMIT 1
+  predicted: SELECT T2.Ffranchise FROM game AS T1 JOIN player AS T2 ON T1.Game_ID = T2.Game_ID GROUP BY T2.Ffranchise ORDER BY COUNT(*) DESC LIMIT 1
+[SQL ERROR] video_game: Which franchise has the most games?
+  gold:      SELECT Franchise FROM game GROUP BY Franchise ORDER BY COUNT(*) DESC LIMIT 1
+  predicted: SELECT T1.Franchise FROM (SELECT sum(T2.Units_sold_Millions) , T1.Franchise FROM game AS T1 JOIN farm AS T2 ON T1.Franchise  =  T2.Farm_ID GROUP BY T1.Franchise ORDER BY sum(T2.Units_sold_Millions) DESC LIMIT 1) AS count_T2 JOIN farm AS T3 ON T2.Farm_ID  =  T3.Farm_ID WHERE T1.sum(T2.Units_sold_Millions)  =  T3.max(T2.Units_sold_Millions) AND T1.count_T2  =  1
+[SQL ERROR] video_game: List the names of franchises that have at least two games.
+  gold:      SELECT Franchise FROM game GROUP BY Franchise HAVING COUNT(*)  >=  2
+  predicted: SELECT T1.Franchise FROM manufacturers AS T1 JOIN game AS T2 ON T1.Manufacturer_ID = T2.Manufacturer_ID GROUP BY T1.Franchise HAVING COUNT(*) >= 2;
+[SQL ERROR] video_game: What are the names of franchises that have two or more games?
+  gold:      SELECT Franchise FROM game GROUP BY Franchise HAVING COUNT(*)  >=  2
+  predicted: SELECT T1.Franchise FROM game AS T1 JOIN (SELECT distinct(T2.Franchise) FROM game AS T2) AS count_franchise ON T1.Franchise = count_franchise.count_franchise GROUP BY count_franchise.count_franchise HAVING count_franchise.count_franchise >= 2;
+[MATCH] video_game: List the name of players that do not play any game.
+  gold:      SELECT Player_name FROM player WHERE Player_ID NOT IN (SELECT Player_ID FROM game_player)
+  predicted: SELECT p1.Player_name FROM player AS p1 EXCEPT SELECT t2.Player_name FROM player AS t2 JOIN game_player AS t3 ON t3.Player_ID = t2.Player_ID JOIN game AS t1 ON t1.Game_ID = t3.Game_ID
+[MATCH] video_game: What are the names of players who do not play any games?
+  gold:      SELECT Player_name FROM player WHERE Player_ID NOT IN (SELECT Player_ID FROM game_player)
+  predicted: SELECT Player_name FROM player WHERE Player_ID NOT IN (SELECT Player_ID FROM game_player)
+[SQL ERROR] video_game: Show the title of games that are played by both players from college "Oklahoma" and players from college "Auburn".
+  gold:      SELECT T1.Title FROM game AS T1 JOIN game_player AS T2 ON T1.Game_ID  =  T2.Game_ID JOIN player AS T3 ON T2.Player_ID  =  T3.Player_ID WHERE T3.College  =  "Oklahoma" INTERSECT SELECT T1.Title FROM game AS T1 JOIN game_player AS T2 ON T1.Game_ID  =  T2.Game_ID JOIN player AS T3 ON T2.Player_ID  =  T3.Player_ID WHERE T3.College  =  "Auburn"
+  predicted: SELECT Title FROM game WHERE College  =  "Oklahoma" INTERSECT SELECT Title FROM game_player WHERE College  =  "Auburn" AND active = "1"
+[SQL ERROR] video_game: What are the titles of games that are played by players from Oklahoma college or Auburn college?
+  gold:      SELECT T1.Title FROM game AS T1 JOIN game_player AS T2 ON T1.Game_ID  =  T2.Game_ID JOIN player AS T3 ON T2.Player_ID  =  T3.Player_ID WHERE T3.College  =  "Oklahoma" INTERSECT SELECT T1.Title FROM game AS T1 JOIN game_player AS T2 ON T1.Game_ID  =  T2.Game_ID JOIN player AS T3 ON T2.Player_ID  =  T3.Player_ID WHERE T3.College  =  "Auburn"
+  predicted: SELECT T2.Title FROM game AS T1 JOIN game_player AS T3 ON T1.Game_ID = T3.Game_ID JOIN player AS T2 ON T3.Player_ID = T2.Player_ID WHERE T2.College = "Oklahoma" OR T2.College = "Auburn" AND T3.If_active = "1"
+[SQL ERROR] video_game: Show all distinct franchises of games.
+  gold:      SELECT DISTINCT Franchise FROM game
+  predicted: SELECT DISTINCT (T2.Franchise) FROM game AS T1 JOIN game_player AS T2 ON T1.Game_ID = T2.Game_ID JOIN player AS T3 ON T2.Player_ID = T3.Player_ID GROUP BY T2.Franchise;
+[SQL ERROR] video_game: What are all the distinct franchises?
+  gold:      SELECT DISTINCT Franchise FROM game
+  predicted: SELECT DISTINCT (F2.name) FROM game AS F1 JOIN game_player AS F2 ON F1.Game_ID = F2.Game_ID JOIN player AS F3 ON F3.Player_ID = F2.Player_ID GROUP BY F2.name;
+[EXEC OK] video_game: Show the title of games that are not played by any player who is in the Guard position.
+  gold:      SELECT Title FROM game EXCEPT SELECT T1.Title FROM game AS T1 JOIN game_player AS T2 ON T1.Game_ID  =  T2.Game_ID JOIN player AS T3 ON T2.Player_ID  =  T3.Player_ID WHERE T3.Position  =  "Guard"
+  predicted: SELECT Title FROM game WHERE Game_ID NOT IN (SELECT DISTINCT Game_ID FROM game_player WHERE Player_ID IN (SELECT POSITION FROM player WHERE College  =  " Guard" ) )
+[EXEC OK] video_game: What are the titles of games not played by any players who play the Guard position?
+  gold:      SELECT Title FROM game EXCEPT SELECT T1.Title FROM game AS T1 JOIN game_player AS T2 ON T1.Game_ID  =  T2.Game_ID JOIN player AS T3 ON T2.Player_ID  =  T3.Player_ID WHERE T3.Position  =  "Guard"
+  predicted: SELECT g.Title FROM game AS g JOIN game_player AS used_in_games ON g.Game_ID = used_in_games.Game_ID WHERE used_in_games.Player_ID NOT IN (SELECT Player_ID FROM player WHERE POSITION = "Guard")
+[SQL ERROR] book_press: list all the names of press in descending order of the profit of the year.
+  gold:      SELECT name FROM press ORDER BY Year_Profits_billion DESC
+  predicted: SELECT name FROM press ORDER BY max(Year_Profits_billion) DESC
+[EXEC OK] book_press: Sorted all the press by year profits in descending order, and return press names.
+  gold:      SELECT name FROM press ORDER BY Year_Profits_billion DESC
+  predicted: SELECT T1.Name ,  T1.Year_Profits_billion FROM press AS T1 ORDER BY T1.Year_Profits_billion DESC
+[SQL ERROR] book_press: What are the names of the publishers that made more than 15 billion profits each year or 1 billion each month?
+  gold:      SELECT name FROM press WHERE Year_Profits_billion  >  15 OR Month_Profits_billion  >  1
+  predicted: SELECT Name FROM Press WHERE Annual_Profits_billion  >  15 OR MONTH_Profits_billion  >  1
+[SQL ERROR] book_press: Find the press whose yearly profit is more than 15 billion or whose monthly profit is more than 1 billion. Return the press names.
+  gold:      SELECT name FROM press WHERE Year_Profits_billion  >  15 OR Month_Profits_billion  >  1
+  predicted: SELECT name FROM press WHERE YEAR_Profits_billion  >  15 OR MONTH_Profits_billion  >  1billion;
+[MATCH] book_press: what are the average and maximum profit of a year for all presses?
+  gold:      SELECT avg(Year_Profits_billion) ,  max(Year_Profits_billion) FROM press
+  predicted: SELECT avg(Year_Profits_billion) ,  max(Year_Profits_billion) FROM press;
+[EXEC OK] book_press: Find the average and maximum yearly profit for each press.
+  gold:      SELECT avg(Year_Profits_billion) ,  max(Year_Profits_billion) FROM press
+  predicted: SELECT avg(Year_Profits_billion) ,  max(Year_Profits_billion) FROM press GROUP BY Press_ID;
+[SQL ERROR] book_press: Find the name of the publisher whose monthly profit is the highest.
+  gold:      SELECT name FROM press ORDER BY Month_Profits_billion DESC LIMIT 1
+  predicted: SELECT T2.Name FROM book AS T1 JOIN publisher AS T2 ON T1.Press_ID  =  T2.Press_ID ORDER BY T1.Month_Profits_billion DESC LIMIT 1
+[SQL ERROR] book_press: Which press has the largest monthly profit? Give me the press name.
+  gold:      SELECT name FROM press ORDER BY Month_Profits_billion DESC LIMIT 1
+  predicted: SELECT name FROM press ORDER BY monthly_profits_billion DESC LIMIT 1;
+[SQL ERROR] book_press: Find the name of the publisher whose monthly profit is the highest or the lowest.
+  gold:      SELECT name FROM press WHERE Month_Profits_billion  =  (SELECT min(Month_Profits_billion) FROM press) OR Month_Profits_billion  =  (SELECT max(Month_Profits_billion) FROM press)
+  predicted: SELECT T1.Name FROM publisher AS T1 JOIN press AS T2 ON T1.Press_ID  =  T2.Press_ID ORDER BY T2.Month_Profits_billion DESC LIMIT 1 UNION SELECT T1.Name FROM publisher AS T1 JOIN press AS T2 ON T1.Press_ID  =  T2.Press_ID ORDER BY T2.Month_Profits_billion LIMIT 1
+[SQL ERROR] book_press: What are the names of the press that makes the highest monthly profit or the lowest monthly profit?
+  gold:      SELECT name FROM press WHERE Month_Profits_billion  =  (SELECT min(Month_Profits_billion) FROM press) OR Month_Profits_billion  =  (SELECT max(Month_Profits_billion) FROM press)
+  predicted: SELECT Name FROM Press ORDER BY MONTH_Profits_billion DESC LIMIT 1 UNION SELECT Name FROM Press ORDER BY MONTH_Profits_billion ASC LIMIT 1;
+[SQL ERROR] book_press: how many authors are under age 30?
+  gold:      SELECT count(*) FROM author WHERE age  <  30
+  predicted: SELECT COUNT (DISTINCT Author_ID) FROM book WHERE Age  <  30;
+[SQL ERROR] book_press: Count the number of authors of age below 30.
+  gold:      SELECT count(*) FROM author WHERE age  <  30
+  predicted: SELECT COUNT (DISTINCT Author_ID) FROM book WHERE Age  <  30
+[MATCH] book_press: find the average age of authors for each gender.
+  gold:      SELECT avg(age) ,  gender FROM author GROUP BY gender
+  predicted: SELECT avg(Age) ,  gender FROM Author GROUP BY gender
+[EXEC OK] book_press: For each gender, return gender and the average age of authors.
+  gold:      SELECT avg(age) ,  gender FROM author GROUP BY gender
+  predicted: SELECT gender ,  avg(age) FROM author GROUP BY gender
+[SQL ERROR] book_press: find the number of authors who are older than 30 for each gender.
+  gold:      SELECT count(*) ,  gender FROM author WHERE age  >  30 GROUP BY gender
+  predicted: SELECT count(*) ,  gender FROM authors WHERE age  >  30 GROUP BY gender;
+[MATCH] book_press: How many authors are of age above 30 for each gender?
+  gold:      SELECT count(*) ,  gender FROM author WHERE age  >  30 GROUP BY gender
+  predicted: SELECT count(*) ,  gender FROM author WHERE age  >  30 GROUP BY gender
+[MATCH] book_press: List all book titles in the order of their release date from the most recent to the past.
+  gold:      SELECT title FROM book ORDER BY release_date DESC
+  predicted: SELECT Title FROM book ORDER BY Release_date DESC
+[MATCH] book_press: Sort all the books in descending order of release date, and return the book titles.
+  gold:      SELECT title FROM book ORDER BY release_date DESC
+  predicted: SELECT title FROM book ORDER BY release_date DESC
+[MATCH] book_press: Find the number of books for each series.
+  gold:      SELECT count(*) ,  book_series FROM book GROUP BY book_series
+  predicted: SELECT count(*) ,  T1.Book_Series FROM book AS T1 JOIN author AS T2 ON T1.Author_ID  =  T2.Author_ID GROUP BY T1.Book_Series;
+[SQL ERROR] book_press: How many books does each book series have? Return the counts and book series.
+  gold:      SELECT count(*) ,  book_series FROM book GROUP BY book_series
+  predicted: SELECT t3.Book_Series ,  COUNT(*) FROM book AS t1 JOIN author AS t2 ON t1.Author_ID  =  t2.Author_ID JOIN press AS t3 ON t1. Press_ID  =  t3.Press_ID GROUP BY t3.Book_Series
+[MATCH] book_press: Find the titles and publish dates of the top 5 best sale books.
+  gold:      SELECT title ,  release_date FROM book ORDER BY sale_amount DESC LIMIT 5
+  predicted: SELECT Title ,  Release_date FROM book ORDER BY Sale_Amount DESC LIMIT 5;
+[MATCH] book_press: What are the 5 best books in terms of sale amount? Give me their titles and release dates.
+  gold:      SELECT title ,  release_date FROM book ORDER BY sale_amount DESC LIMIT 5
+  predicted: SELECT t1.Title ,  t1.Release_Date FROM book AS t1 JOIN author AS t2 ON t1.Author_ID  =  t2.Author_ID ORDER BY t1.Sale_Amount DESC LIMIT 5
+[SQL ERROR] book_press: Find the book series that have some book selling more than 1000 and some book less 500.
+  gold:      SELECT book_series FROM book WHERE sale_amount  >  1000 INTERSECT SELECT book_series FROM book WHERE sale_amount  <  500
+  predicted: SELECT DISTINCT t1.Book_Series FROM book AS t1 JOIN author AS t2 ON t1.Author_ID  =  t2.Author_ID JOIN press AS t3 ON t1.Press_ID  =  t3.Press_ID WHERE t1.Book_Series IN (SELECT DISTINCT t1.Book_Series FROM book AS t1 JOIN author AS t2 ON t1.Author_ID  =  t2.Author_ID JOIN press AS t3 ON t1.Press_ID  =  t3.Press_ID WHERE t1.Book_Series != "CCTV" INTERSECT SELECT DISTINCT t1.Book_Series FROM book AS t1 JOIN author AS t2 ON t1.Author_ID  =  t2.Author_ID JOIN press AS t3 ON t1.Press_ID  =  t3.Press_ID WHERE t1.Book_Series != "CCTV" INTERSECT SELECT DISTINCT t1.Book_Series FROM book AS t1 JOIN author AS t2 ON t1.Author_ID  =  t2.Author_ID JOIN press AS t3 ON t1.Press_ID  =  t3.
+[SQL ERROR] book_press: Which book series contain both books with sale amount above 1000 and books with sale amount below 500?
+  gold:      SELECT book_series FROM book WHERE sale_amount  >  1000 INTERSECT SELECT book_series FROM book WHERE sale_amount  <  500
+  predicted: SELECT t1.Book_Series FROM book AS t1 JOIN author AS t2 ON t1.Author_ID  =  t2.Author_ID JOIN press AS t3 ON t1.Press_ID  =  t3. Press_ID WHERE t1.Book_Series IN ( SELECT T2.Book_Series FROM book AS T1 JOIN author AS T2 ON T1.Author_ID  =  T2.Author_ID JOIN press AS T3 ON T1. Press_ID  =  T3.Press_ID WHERE T1.Sale_Amount  >  1000 INTERSECT SELECT T2.Book_Series FROM book AS T1 JOIN author AS T2 ON T1.Author_ID  =  T2.Author_ID JOIN press AS T3 ON T1.Press_ID  =  T3.Press_ID WHERE T1.Sale_Amount  <  500)
+[EXEC OK] book_press: Find the name of authors who publish their books in both "MM" and "LT" series.
+  gold:      SELECT t1.name FROM author AS t1 JOIN book AS t2 ON t1.author_id  =  t2.author_id WHERE t2.book_series  =  'MM' INTERSECT SELECT t1.name FROM author AS t1 JOIN book AS t2 ON t1.author_id  =  t2.author_id WHERE t2.book_series  =  'LT'
+  predicted: SELECT T3.Name FROM book AS T1 JOIN author AS T2 ON T1.Author_ID  =  T2.Author_ID JOIN press AS T3 ON T1.Press_ID  =  T3.Press_ID WHERE T3.Name LIKE "%MM%" INTERSECT SELECT T3.Name FROM book AS T1 JOIN author AS T2 ON T1.Author_ID  =  T2.Author_ID JOIN press AS T3 ON T1.Press_ID  =  T3.Press_ID WHERE T3.Name LIKE "%LT%"
+[EXEC OK] book_press: Which authors publish books in both "MM" and "LT" series? Give me the author names.
+  gold:      SELECT t1.name FROM author AS t1 JOIN book AS t2 ON t1.author_id  =  t2.author_id WHERE t2.book_series  =  'MM' INTERSECT SELECT t1.name FROM author AS t1 JOIN book AS t2 ON t1.author_id  =  t2.author_id WHERE t2.book_series  =  'LT'
+  predicted: SELECT T3.Name FROM book AS T1 JOIN author AS T2 ON T1.Author_ID  =  T2.Author_ID JOIN press AS T3 ON T1.Press_ID  =  T3.Press_ID WHERE T3.Name  =  "MM" INTERSECT SELECT T3.Name FROM book AS T1 JOIN author AS T2 ON T1.Author_ID  =  T2.Author_ID JOIN press AS T3 ON T1.Press_ID  =  T3.Press_ID WHERE T3.Name  =  "LT"
+[MATCH] book_press: Find the name and age of the authors who do not have any book in the record.
+  gold:      SELECT name ,  age FROM author WHERE author_id NOT IN (SELECT author_id FROM book)
+  predicted: SELECT Name ,  Age FROM Author WHERE Author_ID NOT IN (SELECT Author_ID FROM Book)
+[MATCH] book_press: Which authors in the record have not published any books ? Give me their names .
+  gold:      select name from author where author_id not in (select author_id from book)
+  predicted: SELECT Name FROM author WHERE Author_ID NOT IN (SELECT Author_ID FROM book)
+[SQL ERROR] book_press: Find the names of authors who have more than one book in the database.
+  gold:      SELECT t1.name FROM author AS t1 JOIN book AS t2 ON t1.author_id  =  t2.author_id GROUP BY t2.author_id HAVING count(*)  >  1
+  predicted: SELECT Author_Name FROM book GROUP BY Author_Name HAVING COUNT(*)  >  1
+[SQL ERROR] book_press: Which authors have published more than 1 book according to the database? Give me their names.
+  gold:      SELECT t1.name FROM author AS t1 JOIN book AS t2 ON t1.author_id  =  t2.author_id GROUP BY t2.author_id HAVING count(*)  >  1
+  predicted: SELECT T1.Name FROM (SELECT T2.Author_ID ,  T1.Name FROM book AS T1 JOIN author AS T2 ON T1.Author_ID  =  T2.Author_ID WHERE T1.Book_Series LIKE "%%" GROUP BY T1.Author_ID HAVING COUNT(*)  >  1) AS T3 ORDER BY T3.Author_ID
+[SQL ERROR] book_press: Find the title, author name, and publisher name for the top 3 best sales books.
+  gold:      SELECT t1.name ,  t2.title ,  t3.name FROM author AS t1 JOIN book AS t2 ON t1.author_id  =  t2.author_id JOIN press AS t3 ON t2.press_id  =  t3.press_id ORDER BY t2.sale_amount DESC LIMIT 3
+  predicted: SELECT Title ,  Author_Name ,  Press_Name FROM book ORDER BY Sales_billion DESC LIMIT 3;
+[EXEC OK] book_press: What are the 3 best selling books? Show their titles, author names, and press names.
+  gold:      SELECT t1.name ,  t2.title ,  t3.name FROM author AS t1 JOIN book AS t2 ON t1.author_id  =  t2.author_id JOIN press AS t3 ON t2.press_id  =  t3.press_id ORDER BY t2.sale_amount DESC LIMIT 3
+  predicted: SELECT T1.Title ,  T2.Name ,  T3.Name FROM book AS T1 JOIN author AS T2 ON T1.Author_ID  =  T2.Author_ID JOIN press AS T3 ON T1. Press_ID  =  T3. Press_ID ORDER BY T3.Year_Profits_billion DESC LIMIT 3
+[EXEC OK] book_press: Find the name and total book sale amount of each press.
+  gold:      SELECT sum(t1.sale_amount) ,  t2.name FROM book AS t1 JOIN press AS t2 ON t1.press_id  =  t2.press_id GROUP BY t1.press_id
+  predicted: SELECT T2.Name ,  sum(T1.Sale_Amount) FROM book AS T1 JOIN press AS T2 ON T1.Press_ID  =  T2.Press_ID GROUP BY T2.Name
+[SQL ERROR] book_press: What are the name and total book sale amount of each press?
+  gold:      SELECT sum(t1.sale_amount) ,  t2.name FROM book AS t1 JOIN press AS t2 ON t1.press_id  =  t2.press_id GROUP BY t1.press_id
+  predicted: SELECT name ,  sum(sales_billion) FROM press GROUP BY name
+[EXEC OK] book_press: Find the number of books that are sold more than 1000 for each publisher. List the press name as well.
+  gold:      SELECT count(*) ,  t2.name FROM book AS t1 JOIN press AS t2 ON t1.press_id  =  t2.press_id WHERE sale_amount  >  1000 GROUP BY t2.name
+  predicted: SELECT T3.Name ,  sum(T1.Sale_Amount) FROM book AS T1 JOIN author AS T2 ON T1.Author_ID  =  T2.Author_ID JOIN press AS T3 ON T1.Press_ID  =  T3.Press_ID WHERE T1.Book_ID  >  1000 GROUP BY T3.Name;
+[SQL ERROR] book_press: For each press, return its name and the number of books that have sale amount above 1000.
+  gold:      SELECT count(*) ,  t2.name FROM book AS t1 JOIN press AS t2 ON t1.press_id  =  t2.press_id WHERE sale_amount  >  1000 GROUP BY t2.name
+  predicted: SELECT T1.Name , count(*) FROM press AS T1 JOIN book AS T2 ON T1.Book_ID = T2.Book_ID WHERE T2.Sale_Amount  >  1000 GROUP BY T1.Name;
+[MATCH] book_press: What is the name of the author of best selling book?
+  gold:      SELECT t1.name FROM author AS t1 JOIN book AS t2 ON t1.author_id  =  t2.author_id ORDER BY t2.sale_amount DESC LIMIT 1
+  predicted: SELECT T2.Name FROM book AS T1 JOIN author AS T2 ON T1.Author_ID  =  T2.Author_ID ORDER BY T1.Sale_Amount DESC LIMIT 1
+[SQL ERROR] book_press: Who wrote the best selling book? Give me the author name.
+  gold:      SELECT t1.name FROM author AS t1 JOIN book AS t2 ON t1.author_id  =  t2.author_id ORDER BY t2.sale_amount DESC LIMIT 1
+  predicted: SELECT T1.Name FROM Author AS T1 JOIN (SELECT T3.Author_ID FROM book AS T2 JOIN author AS T3 ON T2.Author_ID  =  T3.Author_ID WHERE T2.Book_Series LIKE " best selling") AS T4 ON T1.Author_ID  =  T4.Author_ID JOIN Book AS T5 ON T4.Book_ID  =  T5.Book_ID WHERE T5.Sale_Amount  =  (SELECT max(T7.Sale_Amount) FROM book AS T6 JOIN author AS T7 ON T6.Author_ID  =  T7.Author_ID WHERE T6.Book_Series LIKE "best selling")
+[MATCH] book_press: find the name and gender of the author who published the most books.
+  gold:      SELECT t1.name ,  t1.gender FROM author AS t1 JOIN book AS t2 ON t1.author_id  =  t2.author_id GROUP BY t2.author_id ORDER BY count(*) DESC LIMIT 1
+  predicted: SELECT T1.Name ,  T1.gender FROM  author AS T1 JOIN book AS T2 ON T1.Author_ID  =  T2.Author_ID GROUP BY T2.Author_ID ORDER BY COUNT(*) DESC LIMIT 1;
+[EXEC OK] book_press: Who wrote the largest number of books? Give me the author name and gender.
+  gold:      SELECT t1.name ,  t1.gender FROM author AS t1 JOIN book AS t2 ON t1.author_id  =  t2.author_id GROUP BY t2.author_id ORDER BY count(*) DESC LIMIT 1
+  predicted: SELECT T1.Name ,  T1.Gender FROM  author AS T1 JOIN  book AS T2 ON T1.Author_ID  =  T2.Author_ID GROUP BY T1.Name ,  T1.Gender ORDER BY COUNT(*) DESC LIMIT 1
+[EXEC OK] book_press: Find the names of the authors who did not have any book with the "Accor" press.
+  gold:      SELECT name FROM author EXCEPT SELECT t1.name FROM author AS t1 JOIN book AS t2 ON t1.author_id  =  t2.author_id JOIN press AS t3 ON t2.press_id  =  t3.press_id WHERE t3.name  =  'Accor'
+  predicted: SELECT Name FROM author WHERE Author_ID NOT IN (SELECT Author_ID FROM book WHERE Press_ID = "Accor")
+[SQL ERROR] book_press: Which authors have never published under the "Accor" press? Give me their names.
+  gold:      SELECT name FROM author EXCEPT SELECT t1.name FROM author AS t1 JOIN book AS t2 ON t1.author_id  =  t2.author_id JOIN press AS t3 ON t2.press_id  =  t3.press_id WHERE t3.name  =  'Accor'
+  predicted: SELECT Author_Name FROM book WHERE YEAR_Profits_billion  =  0 EXCEPT SELECT Name FROM press WHERE Name  =  "Accor"
+[SQL ERROR] book_press: Find the name and the yearly profit in billion for press that published more than two books.
+  gold:      SELECT t2.name ,  t2.Year_Profits_billion FROM book AS t1 JOIN press AS t2 ON t1.press_id  =  t2.press_id GROUP BY t2.press_id HAVING count(*)  >  2
+  predicted: SELECT T3.Name ,  T4.Year_Profits_billion FROM book AS T1 JOIN author AS T2 ON T1.Author_ID  =  T2.Author_ID JOIN press AS T3 ON T1.Press_ID  =  T3. Press_ID JOIN book_sales AS T4 ON T1.Book_ID  =  T4.Book_ID GROUP BY T3.Name HAVING COUNT(*)  >  2;
+[SQL ERROR] book_press: Find the press that published more than two books, and return its name and yearly profit in billion.
+  gold:      SELECT t2.name ,  t2.Year_Profits_billion FROM book AS t1 JOIN press AS t2 ON t1.press_id  =  t2.press_id GROUP BY t2.press_id HAVING count(*)  >  2
+  predicted: SELECT T2.Name ,  T1.Year_Profits_billion FROM book AS T1 JOIN press AS T2 ON T1.Press_ID  =  T2.Press_ID GROUP BY T2.Name HAVING COUNT(*)  >  2 ORDER BY T1.Year_Profits_billion DESC
+[SQL ERROR] cre_Doc_Workflow: How many authors do we have?
+  gold:      SELECT count(*) FROM Authors
+  predicted: SELECT count(*) FROM Staff JOIN Authors ON Staff.author_name = Authors.author_name
+[SQL ERROR] cre_Doc_Workflow: Show all author names.
+  gold:      SELECT author_name FROM Authors
+  predicted: SELECT t1.author_name FROM Documents_Processes AS T1 JOIN Documents AS T2 ON T1.document_id = T2.document_id WHERE T2.document_description LIKE '%Author%'
+[MATCH] cre_Doc_Workflow: Show the names and other details for all authors.
+  gold:      SELECT author_name ,  other_details FROM Authors
+  predicted: SELECT t1.author_name ,  t1.other_details FROM authors AS t1
+[SQL ERROR] cre_Doc_Workflow: Show the other details for the author Addison Denesik.
+  gold:      SELECT other_details FROM Authors WHERE author_name  =  "Addison Denesik"
+  predicted: SELECT other_details FROM Addison_Denesik
+[MATCH] cre_Doc_Workflow: Show the number of documents.
+  gold:      SELECT count(*) FROM Documents
+  predicted: SELECT count(*) FROM Documents;
+[SQL ERROR] cre_Doc_Workflow: Who is the author of the document with id 4?
+  gold:      SELECT author_name FROM Documents WHERE document_id  =  4
+  predicted: SELECT T1.author_name FROM Documents AS T1 JOIN Staff_in_Processes AS T2 ON T1.document_id = T2.document_id WHERE T2.process_id = 4 JOIN Staff AS T3 ON T2.staff_id = T3.staff_id JOIN Ref_Staff_Roles AS T4 ON T3.staff_role_code = T4.staff_role_code WHERE date_from != "null" AND date_to != "null" AND T4.staff_role_description = "Author" GROUP BY T1.author_name INTERSECT SELECT T2.author_name FROM Documents_Processes AS T4 JOIN Documents AS T2 ON T4.document_id = T2.document_id JOIN Staff_in_Processes AS T1 ON T4.document_id = T1.document_id JOIN Staff AS T3 ON T1.staff_id = T3.staff_id JOIN Ref_Staff_Roles AS T5 ON T3.staff_role_code = T5.staff_role_code WHERE date_from != "null" AND date_to != "null" AND T5.staff_role
+[SQL ERROR] cre_Doc_Workflow: Who is the author of the document "Travel to Brazil"?
+  gold:      SELECT author_name FROM Documents WHERE document_name  =  "Travel to Brazil"
+  predicted: SELECT t1.author_name FROM Documents AS t4 JOIN Authors AS t1 ON t4.author_name = t1.author_name JOIN Documents_Processes AS t3 ON t3.document_id = t4.document_id JOIN Business_Processes AS t2 ON t2.process_id = t3.process_id WHERE t2.document_name = "Travel to Brazil"
+[MATCH] cre_Doc_Workflow: How many documents does has the author Era Kerluke written?
+  gold:      SELECT count(*) FROM Documents WHERE author_name  =  "Era Kerluke"
+  predicted: SELECT count(DISTINCT document_id) FROM Documents AS T1 JOIN Authors AS T2 ON T1.author_name = T2.author_name WHERE T2.author_name = "Era Kerluke"
+[MATCH] cre_Doc_Workflow: Show the names and descriptions for all documents.
+  gold:      SELECT document_name ,  document_description FROM Documents
+  predicted: SELECT document_name ,  document_description FROM Documents;
+[SQL ERROR] cre_Doc_Workflow: Show the ids and names for all documents by author Bianka Cummings.
+  gold:      SELECT document_id ,  document_name FROM Documents WHERE author_name  =  "Bianka Cummings"
+  predicted: SELECT document_id ,  document_name FROM Documents WHERE document_author_name = "Bianka Cummings"
+[SQL ERROR] cre_Doc_Workflow: Show the author name and details for the document "Travel to China".
+  gold:      SELECT T2.author_name ,  T2.other_details FROM Documents AS T1 JOIN Authors AS T2 ON T1.author_name  =  T2.author_name WHERE document_name  =  "Travel to China"
+  predicted: SELECT t1.author_name ,  t3.other_details FROM Documents AS t1 JOIN Staff AS t2 ON t1.author_name = t2.author_name JOIN Documents_Processes AS t3 ON t1.document_id = t3.document_id JOIN Business_Processes AS t4 ON t3.process_id = t4.process_id WHERE t4.process_name = "Travel to China"
+[MATCH] cre_Doc_Workflow: Show all author names and number of documents corresponding to each.
+  gold:      SELECT author_name ,  count(*) FROM Documents GROUP BY author_name
+  predicted: SELECT Author_Name ,  COUNT(*) FROM Documents GROUP BY Author_Name
+[SQL ERROR] cre_Doc_Workflow: What is the name of the author with most number of documents?
+  gold:      SELECT author_name FROM Documents GROUP BY author_name ORDER BY count(*) DESC LIMIT 1
+  predicted: SELECT T2.author_name FROM Documents AS T1 JOIN Staff AS T2 ON T1.author_name = T2.author_name GROUP BY T2.author_name ORDER BY count(*) DESC LIMIT 1;
+[EXEC OK] cre_Doc_Workflow: Show the names for authors with at least two documents.
+  gold:      SELECT author_name FROM Documents GROUP BY author_name HAVING count(*)  >=  2
+  predicted: SELECT t1.author_name FROM Documents AS t1 JOIN Staff_in_Processes AS t2 ON t1.document_id = t2.document_id JOIN Staff AS t3 ON t2.staff_id = t3.staff_id GROUP BY t1.author_name HAVING COUNT (*) >= 2
+[MATCH] cre_Doc_Workflow: How many business processes do we have?
+  gold:      SELECT count(*) FROM Business_processes
+  predicted: SELECT count(*) FROM Business_Processes;
+[SQL ERROR] cre_Doc_Workflow: Show the next process id, process name, process description for process with id 9.
+  gold:      SELECT next_process_id ,  process_name ,  process_description FROM Business_processes WHERE process_id  =  9
+  predicted: SELECT T1.next_process_id , T2.process_name , T2.process_description FROM Business_Processes AS T1 JOIN Documents_Processes AS T2 ON T2.process_id = T1.process_id WHERE T1.process_id = 9;
+[MATCH] cre_Doc_Workflow: What is the process name for the next process of the process with id 9?
+  gold:      SELECT process_name FROM Business_processes WHERE process_id  =  (SELECT next_process_id FROM Business_processes WHERE process_id  =  9)
+  predicted: SELECT T1.process_name FROM Business_Processes AS T1 JOIN Documents_Processes AS T2 ON T1.process_id = T2.process_id WHERE T2.process_id = 9 AND T2.process_outcome_code = T2.process_outcome_code
+[MATCH] cre_Doc_Workflow: Show the number of process outcomes.
+  gold:      SELECT count(*) FROM Process_outcomes
+  predicted: SELECT count(*) FROM Process_Outcomes
+[SQL ERROR] cre_Doc_Workflow: List the codes and descriptions for all process outcomes.
+  gold:      SELECT process_outcome_code ,  process_outcome_description FROM Process_outcomes
+  predicted: SELECT t1.process_outcome_code ,  t2.process_outcome_description FROM Ref_Staff_Roles AS t1 JOIN Staff AS t2 ON t1.staff_role_code = t2.staff_role_code JOIN Documents_Processes AS T3 ON T3.document_id = T2.document_id WHERE T3.process_outcome_code = "null" GROUP BY T3.process_outcome_code;
+[SQL ERROR] cre_Doc_Workflow: What is the description for the process outcome code working?
+  gold:      SELECT process_outcome_description FROM Process_outcomes WHERE process_outcome_code  =  "working"
+  predicted: SELECT T1.process_outcome_description FROM Process_ Outcomes AS T1 JOIN Documents_Processes AS T2 ON T1.process_outcome_code = T2.process_outcome_code WHERE T2.process_status_code = "working" AND T2.document_id = 500
+[EXEC OK] cre_Doc_Workflow: Show the number of process status.
+  gold:      SELECT count(*) FROM Process_status
+  predicted: SELECT count(*) FROM Ref_Staff_Roles;
+[SQL ERROR] cre_Doc_Workflow: List the codes and descriptions for all process status.
+  gold:      SELECT process_status_code ,  process_status_description FROM Process_status
+  predicted: SELECT DISTINCT t1.processstatus_code ,  t1.processstatus_description FROM Ref_Staff_Roles AS T1 JOIN Staff_in_Processes AS T2 ON T1.staff_role_code = T2.staff_role_code JOIN Documents_Processes AS T3 ON T2.document_id = T3.document_id JOIN Business_Processes AS T4 ON T3.process_id = T4.process_id GROUP BY t1.processstatus_code;
+[SQL ERROR] cre_Doc_Workflow: What is the description for process status code ct?
+  gold:      SELECT process_status_description FROM Process_status WHERE process_status_code  =  "ct"
+  predicted: SELECT t2.process_status_description FROM Ref_Staff_Roles AS t1 JOIN Staff AS t3 ON t1.staff_id = t3.staff_id JOIN Documents_Processes AS T2 ON T2.process_id = T1.staff_role_code JOIN Process_Status AS t4 ON T2.process_status_code = t4.process_status_code WHERE T2.process_outcome_code = "ct";
+[MATCH] cre_Doc_Workflow: How many staff do we have?
+  gold:      SELECT count(*) FROM Staff
+  predicted: SELECT count(*) FROM Staff;
+[MATCH] cre_Doc_Workflow: Show the ids and details for all staff.
+  gold:      SELECT staff_id ,  staff_details FROM Staff
+  predicted: SELECT t1.staff_id ,  t1.staff_details FROM Staff AS t1
+[SQL ERROR] cre_Doc_Workflow: What are the details for the staff member with id 100.
+  gold:      SELECT staff_details FROM Staff WHERE staff_id  =  100
+  predicted: SELECT T2.staff_details FROM Staff AS T1 JOIN Staff_in_Processes AS T2 ON T1.staff_id = T2.staff_id WHERE T1.staff_id = 100
+[MATCH] cre_Doc_Workflow: Show the number of staff roles.
+  gold:      SELECT count(*) FROM Ref_staff_roles
+  predicted: SELECT count(*) FROM Ref_Staff_Roles
+[SQL ERROR] cre_Doc_Workflow: List the codes and descriptions for all staff roles.
+  gold:      SELECT staff_role_code ,  staff_role_description FROM Ref_staff_roles
+  predicted: SELECT t1.staff_role_code ,  t2.staff_role_description FROM Ref_Staff_Roles AS t1 JOIN Staff_in_Processes AS t3 ON t1.staff_role_code  =  t3.staff_role_code JOIN Documents_Processes AS t4 ON t3.document_id  =  t4.document_id JOIN Documents AS t2 ON t4.document_id  =  t2.document_id WHERE t4.process_outcome_code  =  'Code_404' AND t4.process_status_code  =  'Completed' AND t2.author_name  =  'Code_500' UNION SELECT t4.process_outcome_code ,  t4.process_outcome_description FROM Documents_Processes AS t4 JOIN Staff_in_Processes AS t3 ON t4.document_id  =  t3.document_id JOIN Documents AS t2 ON t4.document_id  =  t2.document_id WHERE t3.staff_role_code  =  'Product_Manager' AND t4.process_status_code  =  'Completed
+[SQL ERROR] cre_Doc_Workflow: What is the description for staff role code HR?
+  gold:      SELECT staff_role_description FROM Ref_staff_roles WHERE staff_role_code  =  "HR"
+  predicted: SELECT T2.staff_role_description FROM Ref_Staff_Roles AS T1 JOIN Staff AS T2 ON T1.staff_role_code = T2.staff_role_code WHERE T1.staff_role_code = "HR"
+[MATCH] cre_Doc_Workflow: How many documents have a process?
+  gold:      SELECT count(DISTINCT document_id) FROM Documents_processes
+  predicted: SELECT count(*) FROM Documents_Processes
+[MATCH] cre_Doc_Workflow: List all process ids with a document.
+  gold:      SELECT DISTINCT process_id FROM Documents_processes
+  predicted: SELECT DISTINCT T1.process_id FROM Documents_Processes AS T1 JOIN Business_Processes AS T2 ON T1.process_id = T2.process_id
+[MATCH] cre_Doc_Workflow: Show all document ids without a process.
+  gold:      SELECT document_id FROM Documents EXCEPT SELECT document_id FROM Documents_processes
+  predicted: SELECT document_id FROM Documents EXCEPT SELECT document_id FROM Documents_Processes
+[MATCH] cre_Doc_Workflow: List all process ids with no document.
+  gold:      SELECT process_id FROM Business_processes EXCEPT SELECT process_id FROM Documents_processes
+  predicted: SELECT DISTINCT T1.process_id FROM Documents_Processes AS T1 JOIN Business_Processes AS T2 ON T1.process_id = T2.process_id WHERE T1.document_id NOT IN (SELECT document_id FROM Documents_Processes)
+[SQL ERROR] cre_Doc_Workflow: What is the process outcome description and process status description for the document with id 0?
+  gold:      SELECT T2.process_outcome_description ,  T3.process_status_description FROM Documents_processes AS T1 JOIN Process_outcomes AS T2 ON T1.process_outcome_code  =  T2.process_outcome_code JOIN Process_Status AS T3 ON T1.process_status_code  =  T3.process_status_code WHERE T1.document_id  =  0
+  predicted: SELECT T2.process_outcome_description ,  T1.process_status_description FROM Documents_Processes AS T1 JOIN Documents AS T2 ON T2.document_id = T1.document_id WHERE T1.document_id = 0;
+[SQL ERROR] cre_Doc_Workflow: What is the process name for the document "Travel to Brazil"?
+  gold:      SELECT T3.process_name FROM Documents_processes AS T1 JOIN Documents AS T2 ON T1.document_id  =  T2.document_id JOIN Business_processes AS T3 ON T1.process_id  =  T3.process_id WHERE T2.document_name  =  "Travel to Brazil"
+  predicted: SELECT T1.process_name FROM Documents AS T1 JOIN Documents_Processes AS T2 ON T1.document_id = T2.document_id JOIN Business_Processes AS T3 ON T2.process_id = T3.process_id WHERE T1.document_name = "Travel to Brazil" AND T3.process_outcome_code = "approved"
+[MATCH] cre_Doc_Workflow: Show all process ids and the number of documents in each process.
+  gold:      SELECT process_id ,  count(*) FROM Documents_processes GROUP BY process_id
+  predicted: SELECT T1.process_id ,  count(*) FROM Documents_Processes AS T1 JOIN Business_Processes AS T2 ON T1.process_id  = T2.process_id GROUP BY T1.process_id
+[SQL ERROR] cre_Doc_Workflow: How many staff are the document with id 0 and process with id 9.
+  gold:      SELECT count(*) FROM Staff_in_processes WHERE document_id  =  0 AND process_id  =  9
+  predicted: SELECT COUNT(*) FROM Documents_Processes AS T1 JOIN Documents AS T2 ON T1.document_id = T2.document_id JOIN Staff_in_Processes AS T3 ON T1.document_id = T3.document_id JOIN Staff AS T4 ON T3.staff_id = T4.staff_id JOIN Ref_Staff_Roles AS T5 ON T4.staff_role_code = T5.staff_role_code WHERE T2.document_id = 0 INTERSECT SELECT T1.staff_id FROM Documents_Processes AS T1 JOIN Staff_in_Processes AS T3 ON T1.document_id = T3.document_id JOIN Staff AS T4 ON T3.staff_id = T4.staff_id JOIN Ref_Staff_Roles AS T5 ON T4.staff_role_code = T5.staff_role_code JOIN Business_Processes AS T6 ON T1.process_id = T6.process_id WHERE T6.process_id = 9
+[SQL ERROR] cre_Doc_Workflow: Show all staff ids and the number of document processes for each staff.
+  gold:      SELECT staff_id ,  count(*) FROM Staff_in_processes GROUP BY staff_id
+  predicted: SELECT T1.staff_id ,  count(*) FROM Staff AS T1 JOIN Documents_Processes AS T2 ON T1.staff_id = T2.staff_id GROUP BY T1.staff_id;
+[MATCH] cre_Doc_Workflow: Show all staff role codes and the number of document processes for each role.
+  gold:      SELECT staff_role_code ,  count(*) FROM Staff_in_processes GROUP BY staff_role_code
+  predicted: SELECT T1.staff_role_code ,  count(*) FROM Staff_in_Processes AS T1 JOIN Documents_Processes AS T2 ON T1.document_id = T2.document_id JOIN Ref_Staff_Roles AS T3 ON T1.staff_role_code = T3.staff_role_code GROUP BY T1.staff_role_code
+[MATCH] cre_Doc_Workflow: How many different roles does the staff with id 3 have?
+  gold:      SELECT count(DISTINCT staff_role_code) FROM Staff_in_processes WHERE staff_id  =  3
+  predicted: SELECT count(DISTINCT staff_role_code) FROM Staff_in_Processes WHERE staff_id = 3 AND date_from < date_to
+[MATCH] advertising_agencies: How many agencies do we have?
+  gold:      SELECT count(*) FROM Agencies
+  predicted: SELECT count(*) FROM Agencies;
+[MATCH] advertising_agencies: Count the number of agencies.
+  gold:      SELECT count(*) FROM Agencies
+  predicted: SELECT count(*) FROM agencies;
+[SQL ERROR] advertising_agencies: Show all agency ids and details.
+  gold:      SELECT agency_id ,  agency_details FROM Agencies
+  predicted: SELECT DISTINCT T1.agency_id ,  T1.agency_details FROM Staff AS T2 JOIN Staff_in_Meetings AS T1 ON T2.staff_id = T1.staff_id GROUP BY T1.agency_id;
+[SQL ERROR] advertising_agencies: What are all the agency ids and details?
+  gold:      SELECT agency_id ,  agency_details FROM Agencies
+  predicted: SELECT DISTINCT T1.agency_id ,  T1.agency_details FROM Ref_1 AS T1 JOIN Staff AS T2 ON T1.staff_id  =  T2.staff_id UNION SELECT T1.agency_id ,  T1.agency_details FROM Ref_1 AS T1 JOIN Clients AS T2 ON T1.client_id  =  T2.client_id
+[MATCH] advertising_agencies: Show the number of clients.
+  gold:      SELECT count(*) FROM Clients
+  predicted: SELECT count(*) FROM Clients;
+[MATCH] advertising_agencies: How many clients are there?
+  gold:      SELECT count(*) FROM Clients
+  predicted: SELECT count(*) FROM Clients
+[SQL ERROR] advertising_agencies: List all client ids and client details.
+  gold:      SELECT client_id ,  client_details FROM Clients
+  predicted: SELECT t1.client_id ,  t2.client_details FROM Clients AS t1 JOIN Invoices AS t2 ON t1.client_id  =  t2.client_id GROUP BY t1.client_id ORDER BY t1.client_id;
+[MATCH] advertising_agencies: What are all the client ids and details?
+  gold:      SELECT client_id ,  client_details FROM Clients
+  predicted: SELECT T1.client_id ,  T1.client_details FROM Clients AS T1
+[EXEC OK] advertising_agencies: Show agency ids and the number of clients for each agency.
+  gold:      SELECT agency_id ,  count(*) FROM Clients GROUP BY agency_id
+  predicted: SELECT T1.agency_id ,  count(*) FROM Clients AS T1 JOIN Staff AS T2 ON T1.agency_id = T2.agency_id GROUP BY T1.agency_id;
+[SQL ERROR] advertising_agencies: How many clients does each agency have?
+  gold:      SELECT agency_id ,  count(*) FROM Clients GROUP BY agency_id
+  predicted: SELECT count(DISTINCT client_id) ,  T2.agency_details FROM Staff AS T1 JOIN Staff_in_Meetings AS T3 JOIN Clients AS T2 ON T1.staff_id = T3.staff_id JOIN Invoices AS T4 ON T4.invoice_id = T3.invoice_id JOINMeetings AS T5 ON T5.meeting_id = T3.meeting_id GROUP BY T2.agency_details;
+[MATCH] advertising_agencies: What is the agency id and details with most number of clients?
+  gold:      SELECT T1.agency_id ,  T1.agency_details FROM Agencies AS T1 JOIN Clients AS T2 ON T1.agency_id  =  T2.agency_id GROUP BY T1.agency_id ORDER BY count(*) DESC LIMIT 1
+  predicted: SELECT T1.agency_id ,  T1.agency_details FROM  Agencies AS T1 JOIN Clients AS T2 ON T1.agency_id  =  T2.agency_id GROUP BY T1.agency_details ORDER BY count(*) DESC LIMIT 1
+[MATCH] advertising_agencies: Return the agency id and details for the agency with the greatest number of clients.
+  gold:      SELECT T1.agency_id ,  T1.agency_details FROM Agencies AS T1 JOIN Clients AS T2 ON T1.agency_id  =  T2.agency_id GROUP BY T1.agency_id ORDER BY count(*) DESC LIMIT 1
+  predicted: SELECT T1.agency_id , T1.agency_details FROM Agencies AS T1 JOIN Clients AS T2 ON T1.agency_id  =  T2.agency_id GROUP BY T1.agency_id ORDER BY count(*) DESC LIMIT 1;
+[EXEC OK] advertising_agencies: Show agency ids and details with at least 2 clients.
+  gold:      SELECT T1.agency_id ,  T1.agency_details FROM Agencies AS T1 JOIN Clients AS T2 ON T1.agency_id  =  T2.agency_id GROUP BY T1.agency_id HAVING count(*)  >=  2
+  predicted: SELECT T1.agency_details ,  T1.agency_id FROM Agencies AS T1 JOIN Clients AS T2 ON T1.agency_id = T2.agency_id GROUP BY T1.agency_id HAVING count(T2.client_id) >= 2
+[MATCH] advertising_agencies: What are the agency ids and details agencies with at least 2 clients?
+  gold:      SELECT T1.agency_id ,  T1.agency_details FROM Agencies AS T1 JOIN Clients AS T2 ON T1.agency_id  =  T2.agency_id GROUP BY T1.agency_id HAVING count(*)  >=  2
+  predicted: SELECT DISTINCT T1.agency_id ,  T1.agency_details FROM Agencies AS T1 JOIN Clients AS T2 ON T1.agency_id = T2.agency_id GROUP BY T1.agency_id HAVING count(T1.agency_details) >= 2
+[MATCH] advertising_agencies: Show agency details for client with detail 'Mac'.
+  gold:      SELECT T2.agency_details FROM Clients AS T1 JOIN Agencies AS T2 ON T1.agency_id  =  T2.agency_id WHERE T1.client_details  =  'Mac'
+  predicted: SELECT T1.agency_details FROM Agencies AS T1 JOIN Clients AS T2 ON T1.agency_id  =  T2.agency_id WHERE T2.client_details = "Mac"
+[EXEC OK] advertising_agencies: What are the agency details for clients with the detail Mac?
+  gold:      SELECT T2.agency_details FROM Clients AS T1 JOIN Agencies AS T2 ON T1.agency_id  =  T2.agency_id WHERE T1.client_details  =  'Mac'
+  predicted: SELECT T1.agency_details FROM Agencies AS T1 JOIN Clients AS T2 ON T1.agency_id  =  T2.agency_id WHERE T2.client_details  =  ' Mac'
+[EXEC OK] advertising_agencies: Show details for all clients and the details of their corresponding agents.
+  gold:      SELECT T1.client_details ,  T2.agency_details FROM Clients AS T1 JOIN Agencies AS T2 ON T1.agency_id  =  T2.agency_id
+  predicted: SELECT T1.client_details ,  T2.staff_details FROM Clients AS T1 JOIN Staff AS T2 ON T1.agency_id  =  T2.agency_id
+[SQL ERROR] advertising_agencies: What are the client details for each client and the corresponding details of their agencies?
+  gold:      SELECT T1.client_details ,  T2.agency_details FROM Clients AS T1 JOIN Agencies AS T2 ON T1.agency_id  =  T2.agency_id
+  predicted: SELECT T1.client_details ,  T2.agency_details FROM Clients AS T1 JOIN Staff_in_Meetings AS T3 ON T1.client_id  =  T3.client_id JOIN Staff AS T2 ON T3.staff_id  =  T2.staff_id GROUP BY T1.client_id
+[SQL ERROR] advertising_agencies: Show all sic codes and the number of clients with each code.
+  gold:      SELECT sic_code ,  count(*) FROM Clients GROUP BY sic_code
+  predicted: SELECT T2.sic_code ,  count(*) FROM Staff_in_Meetings AS T1 JOINMeetings AS T2 ON T1.meeting_id = T2.meeting_id JOIN Clients AS T3 ON T3.client_id = T2.client_id GROUP BY T2.sic_code
+[SQL ERROR] advertising_agencies: How many clients are there for each sic code?
+  gold:      SELECT sic_code ,  count(*) FROM Clients GROUP BY sic_code
+  predicted: SELECT DISTINCT count(DISTINCT t2.client_id) ,  t1.sic_code FROM Invoices AS t3 JOIN Clients AS t2 ON t3.client_id = t2.client_id JOIN Staff AS t1 ON t1.staff_id = t3.staff_id GROUP BY t1.sic_code;
+[EXEC OK] advertising_agencies: Show all client ids and details with sic code "Bad".
+  gold:      SELECT client_id ,  client_details FROM Clients WHERE sic_code  =  "Bad";
+  predicted: SELECT T1.client_id , T1.client_details FROM Clients AS T1 JOIN Invoices AS T2 ON T1.client_id  =  T2.client_id WHERE T2.invoice_status = "Bad"
+[SQL ERROR] advertising_agencies: What are the client ideas and details for clients with the sic code Bad?
+  gold:      SELECT client_id ,  client_details FROM Clients WHERE sic_code  =  "Bad";
+  predicted: SELECT c.client_details ,  c2.invoice_details FROM Clients AS c JOIN Invoices AS i ON c.client_id  =  i.client_id JOIN Staff AS f ON i.staff_id  =  f.staff_id JOIN Staff_in_Meetings AS T1 ON f.staff_id  =  T1.staff_id JOIN Meetings AS T2 ON T2.meeting_id  =  T1.meeting_id JOIN Clients AS T3 ON T2.client_id  =  T3.client_id JOIN Invoices AS T4 ON T4.invoice_id  =  T2.invoice_id WHERE T3.sic_code  =  'Bad' AND T4.invoice_status  =  'good' AND T4.payment_details  =  'yes' UNION SELECT T4.client_details ,  T4.invoice_details FROM Clients AS T4 JOIN Invoices AS T2 ON T4.invoice_id  =  T2.invoice_id JOIN Staff AS T1 ON T2.staff_id  =  T1.staff_id JOIN Staff_in_Meetings AS T3 ON
+[MATCH] advertising_agencies: Show all agency ids and details for agencies with a client.
+  gold:      SELECT T1.agency_id ,  T1.agency_details FROM Agencies AS T1 JOIN Clients AS T2 ON T1.agency_id  =  T2.agency_id
+  predicted: SELECT DISTINCT T1.agency_id ,  T1.agency_details FROM     Agencies AS T1 JOIN Clients AS T2 ON T2.agency_id  =  T1.agency_id WHERE T2.client_details != 'null'
+[MATCH] advertising_agencies: What are the agency ids and agency details for all agencies who have a client?
+  gold:      SELECT T1.agency_id ,  T1.agency_details FROM Agencies AS T1 JOIN Clients AS T2 ON T1.agency_id  =  T2.agency_id
+  predicted: SELECT DISTINCT T1.agency_id ,  T1.agency_details FROM Agencies AS T1 JOIN Clients AS T2 ON T1.agency_id = T2.agency_id GROUP BY T2.agency_id
+[SQL ERROR] advertising_agencies: Show all agency ids without any client.
+  gold:      SELECT agency_id FROM Agencies EXCEPT SELECT agency_id FROM Clients
+  predicted: SELECT DISTINCT t1.agency_id FROM Staff AS t2 JOIN Staff_in_Meetings AS t3 ON t2.staff_id = t3.staff_id JOIN Meetings AS t5 ON t5.meeting_id = t3.meeting_id JOIN Clients AS t4 ON t4.client_id = t5.client_id WHERE t4.client_id  =  "null"
+[SQL ERROR] advertising_agencies: What are ids of agencies that do not have any clients?
+  gold:      SELECT agency_id FROM Agencies EXCEPT SELECT agency_id FROM Clients
+  predicted: SELECT T1.agency_id FROM Agencies AS T1 EXCEPT SELECT T2.agency_id FROM Staff AS T3 JOIN Staff_in_Meetings AS T4 JOIN Meetings AS T5 ON T3.staff_id = T4.staff_id AND T5.meeting_id = T4.meeting_id JOIN Clients AS T2 ON T2.agency_id = T1.agency_id
+[MATCH] advertising_agencies: How many invoices do we have?
+  gold:      SELECT count(*) FROM Invoices
+  predicted: SELECT count(*) FROM Invoices
+[MATCH] advertising_agencies: Count the number of invoices.
+  gold:      SELECT count(*) FROM Invoices
+  predicted: SELECT count(*) FROM Invoices
+[SQL ERROR] advertising_agencies: Show ids, status codes, and details for all invoices for clients.
+  gold:      SELECT invoice_id ,  invoice_status ,  invoice_details FROM Invoices
+  predicted: SELECT i.invoice_id ,  T2.invoice_status ,  T1.invoice_details FROM Invoices AS i JOIN Clients AS T1 ON i.client_id  =  T1.client_id JOIN Invoices AS T2 ON T1.client_id  =  T2.client_id ORDER BY T2.invoice_id
+[MATCH] advertising_agencies: What are the ids, statuses, and details for all invoices?
+  gold:      SELECT invoice_id ,  invoice_status ,  invoice_details FROM Invoices
+  predicted: SELECT invoice_id ,  invoice_status ,  invoice_details FROM Invoices;
+[SQL ERROR] advertising_agencies: Show all client ids and the number of invoices for each client.
+  gold:      SELECT client_id ,  count(*) FROM Invoices GROUP BY client_id
+  predicted: SELECT T1.client_id ,  count(DISTINCT T2.invoice_id) FROM Invoices AS T1 JOIN Clients AS T2 ON T1.client_id  =  T2.client_id GROUP BY T1.client_id
+[SQL ERROR] advertising_agencies: How many invoices are there for each client id?
+  gold:      SELECT client_id ,  count(*) FROM Invoices GROUP BY client_id
+  predicted: SELECT count(DISTINCT invoice_id) ,  SUM(amount) FROM Invoices GROUP BY client_id
+[EXEC OK] advertising_agencies: List the client id and detail with most number of invoices.
+  gold:      SELECT T1.client_id ,  T2.client_details FROM Invoices AS T1 JOIN Clients AS T2 ON T1.client_id  =  T2.client_id GROUP BY T1.client_id ORDER BY count(*) DESC LIMIT 1
+  predicted: SELECT DISTINCT T1.client_id ,  T2.client_details FROM Invoices AS T1 JOIN Clients AS T2 ON T1.client_id  =  T2.client_id GROUP BY T1.client_id ORDER BY count(*) DESC LIMIT 10;
+[SQL ERROR] advertising_agencies: What are the client id and details for the client with the most invoices?
+  gold:      SELECT T1.client_id ,  T2.client_details FROM Invoices AS T1 JOIN Clients AS T2 ON T1.client_id  =  T2.client_id GROUP BY T1.client_id ORDER BY count(*) DESC LIMIT 1
+  predicted: SELECT DISTINCT T2.client_id ,  T1.client_details FROM Invoices AS T1 JOIN Clients AS T2 ON T1.client_id = T2.client_id GROUP BY T2.client_id ORDER BY count(T1.invoice_id) DESC LIMIT 1
+[MATCH] advertising_agencies: What are client ids for clients with at least 2 invoices.
+  gold:      SELECT client_id FROM Invoices GROUP BY client_id HAVING count(*)  >=  2
+  predicted: SELECT DISTINCT T1.client_id FROM Invoices AS T1 JOIN Clients AS T2 ON T1.client_id  =  T2.client_id GROUP BY T1.client_id HAVING COUNT(*)  >= 2
+[MATCH] advertising_agencies: Return the client ids for clients with two or more invoices?
+  gold:      SELECT client_id FROM Invoices GROUP BY client_id HAVING count(*)  >=  2
+  predicted: SELECT DISTINCT t3.client_id FROM Invoices AS t1 JOIN Clients AS t3 ON t1.client_id = t3.client_id GROUP BY t3.client_id HAVING COUNT(*)  >= 2
+[MATCH] advertising_agencies: Show all invoice status codes and the number of invoices with each status.
+  gold:      SELECT invoice_status ,  count(*) FROM Invoices GROUP BY invoice_status
+  predicted: SELECT invoice_status ,  count(*) FROM Invoices GROUP BY invoice_status
+[MATCH] advertising_agencies: How many invoices are there for each status code?
+  gold:      SELECT invoice_status ,  count(*) FROM Invoices GROUP BY invoice_status
+  predicted: SELECT invoice_status ,  count(*) FROM Invoices GROUP BY invoice_status;
+[SQL ERROR] advertising_agencies: What is the invoice status code with most number of invoices.
+  gold:      SELECT invoice_status FROM Invoices GROUP BY invoice_status ORDER BY count(*) DESC LIMIT 1
+  predicted: SELECT invoice_status_code FROM Invoices GROUP BY invoice_status_code ORDER BY invoice_count DESC LIMIT 1
+[MATCH] advertising_agencies: Return the invoice status that has the most invoices.
+  gold:      SELECT invoice_status FROM Invoices GROUP BY invoice_status ORDER BY count(*) DESC LIMIT 1
+  predicted: SELECT invoice_status FROM Invoices GROUP BY invoice_status ORDER BY count(*) DESC LIMIT 1
+[SQL ERROR] advertising_agencies: Show all invoice status codes and details and the corresponding client id and details and agency id and details.
+  gold:      SELECT T1.invoice_status ,  T1.invoice_details ,  T2.client_id ,  T2.client_details ,  T3.agency_id ,  T3.agency_details FROM Invoices AS T1 JOIN Clients AS T2 ON T1.client_id  =  T2.client_id JOIN Agencies AS T3 ON T2.agency_id  =  T3.agency_id
+  predicted: SELECT DISTINCT T2.invoice_status ,  T2.invoice_details ,  T1.client_id ,  T1.client_details ,  T1.agency_id ,  T1.agency_details FROM Invoices AS T1 JOIN Clients AS T2 ON T1.client_id  =  T2.client_id
+[SQL ERROR] advertising_agencies: What are the invoice status, invoice details, and corresponding client ids and details and agency id and details?
+  gold:      SELECT T1.invoice_status ,  T1.invoice_details ,  T2.client_id ,  T2.client_details ,  T3.agency_id ,  T3.agency_details FROM Invoices AS T1 JOIN Clients AS T2 ON T1.client_id  =  T2.client_id JOIN Agencies AS T3 ON T2.agency_id  =  T3.agency_id
+  predicted: SELECT T1.invoice_status ,  T1.invoice_details ,   T2.client_id ,  T2.client_details ,   T3.agency_id ,  T3.agency_details FROM Invoices AS T1 JOIN Clients AS T2 ON T1.client_id  =  T2.client_id JOIN Staff AS T3 ON T1.staff_id = T3.staff_id
+[SQL ERROR] advertising_agencies: List all meeting type codes and details.
+  gold:      SELECT meeting_type ,  other_details FROM meetings
+  predicted: SELECT DISTINCT T1.meeting_type ,  T2.meeting_details FROM Ref_C1_1 AS T1 JOIN Ref_C2_1 AS T2 ON T1.code_value  =  T2.code_value JOIN Ref_T1_1 AS T3 ON T1.class_code  =  T3.class_code WHERE T3.class_name  =  'Meeting_Types'
+[SQL ERROR] advertising_agencies: What are all meeting types and other details?
+  gold:      SELECT meeting_type ,  other_details FROM meetings
+  predicted: SELECT DISTINCT T2.meeting_type ,  T2.other_details FROM Staff_in_Meetings AS T1 JOINMeetings AS T2 ON T1.meeting_id = T2.meeting_id JOIN Staff AS T3 ON T1.staff_id = T3.staff_id
+[EXEC OK] advertising_agencies: Show all meeting outcomes and purposes.
+  gold:      SELECT meeting_outcome ,  purpose_of_meeting FROM meetings
+  predicted: SELECT T1.meeting_outcome ,  T1.purpose_of_meeting FROM  Meetings AS T1 JOIN Staff_in_Meetings AS T2 ON T1.meeting_id = T2.meeting_id WHERE T2.staff_id = 101
+[SQL ERROR] advertising_agencies: What are all meeting outcomes and purposes?
+  gold:      SELECT meeting_outcome ,  purpose_of_meeting FROM meetings
+  predicted: SELECT DISTINCT T1.meeting_outcome ,  T1.purpose_of_meeting FROM  Meetings AS T1 JOIN Staff_in_Meetings AS T2 ON T1.meeting_id = T2.meeting_id JOIN Staff AS T3 ON T2.staff_id = T3.staff_id WHERE T2.staff_details = "staff1" AND T1.start_date_time = "02/02/2000" AND T1.end_date_time = "03/02/2000" AND T1.invoice_details = "Invoice1"
+[SQL ERROR] advertising_agencies: Show all payment ids and details for invoices whose status is 'Working'.
+  gold:      SELECT T1.payment_id ,  T1.payment_details FROM Payments AS T1 JOIN Invoices AS T2 ON T1.invoice_id  =  T2.invoice_id WHERE T2.invoice_status  =  'Working'
+  predicted: SELECT payment_id ,  payment_details FROM Invoices WHERE invoice_status = 'Working'
+[SQL ERROR] advertising_agencies: What are all payment ids and payment details for invoices with status Working?
+  gold:      SELECT T1.payment_id ,  T1.payment_details FROM Payments AS T1 JOIN Invoices AS T2 ON T1.invoice_id  =  T2.invoice_id WHERE T2.invoice_status  =  'Working'
+  predicted: SELECT payment_id ,  payment_details FROM Invoices WHERE invoice_status  =  'Working'
+[MATCH] advertising_agencies: Show all invoice ids and statuses without a payment.
+  gold:      SELECT invoice_id ,  invoice_status FROM Invoices EXCEPT SELECT T1.invoice_id ,  T1.invoice_status FROM Invoices AS T1 JOIN Payments AS T2 ON T1.invoice_id  =  T2.invoice_id
+  predicted: SELECT DISTINCT invoice_id ,  invoice_status FROM Invoices WHERE invoice_id NOT IN (SELECT invoice_id FROM Payments)
+[EXEC OK] advertising_agencies: What are the invoice ids and statuses for invoices without a payment?
+  gold:      SELECT invoice_id ,  invoice_status FROM Invoices EXCEPT SELECT T1.invoice_id ,  T1.invoice_status FROM Invoices AS T1 JOIN Payments AS T2 ON T1.invoice_id  =  T2.invoice_id
+  predicted: SELECT T1.invoice_id ,  T1.invoice_status FROM Invoices AS T1 JOIN Payments AS T2 ON T2.invoice_id  =  T1.invoice_id WHERE T2.payment_id  =  "null"
+[MATCH] advertising_agencies: How many payments do we have?
+  gold:      SELECT count(*) FROM Payments
+  predicted: SELECT count(*) FROM Payments
+[MATCH] advertising_agencies: Count the number of payments.
+  gold:      SELECT count(*) FROM Payments
+  predicted: SELECT COUNT(*) FROM Payments
+[EXEC OK] advertising_agencies: List all payment ids and its corresponding invoice ids and details.
+  gold:      SELECT payment_id ,  invoice_id ,  payment_details FROM Payments
+  predicted: SELECT T1.payment_id ,  T2.invoice_id ,  T2.invoice_details FROM Payments AS T1 JOIN Invoices AS T2 ON T1.invoice_id  =  T2.invoice_id
+[MATCH] advertising_agencies: What are the payment ids, invoice ids, and payment details for all payments?
+  gold:      SELECT payment_id ,  invoice_id ,  payment_details FROM Payments
+  predicted: SELECT payment_id ,  invoice_id ,  payment_details FROM Payments
+[SQL ERROR] advertising_agencies: Show all the different invoice ids and statuses of the payments
+  gold:      SELECT DISTINCT T1.invoice_id ,  T1.invoice_status FROM Invoices AS T1 JOIN Payments AS T2 ON T1.invoice_id  =  T2.invoice_id
+  predicted: SELECT invoice_id ,  invoice_status FROM payments
+[SQL ERROR] advertising_agencies: What are the distinct invoice ids and statuses for all payments?
+  gold:      SELECT DISTINCT T1.invoice_id ,  T1.invoice_status FROM Invoices AS T1 JOIN Payments AS T2 ON T1.invoice_id  =  T2.invoice_id
+  predicted: SELECT DISTINCT invoice_id ,  invoice_status FROM Payments;
+[MATCH] advertising_agencies: Show all invoice ids and the number of payments for each invoice.
+  gold:      SELECT invoice_id ,  count(*) FROM Payments GROUP BY invoice_id
+  predicted: SELECT invoice_id ,  count(*) FROM Payments GROUP BY invoice_id
+[MATCH] advertising_agencies: How many payments are there for each invoice?
+  gold:      SELECT invoice_id ,  count(*) FROM Payments GROUP BY invoice_id
+  predicted: SELECT T2.invoice_id ,  count(*) FROM Payments AS T1 JOIN Invoices AS T2 ON T1.invoice_id = T2.invoice_id GROUP BY T1.invoice_id;
+[MATCH] advertising_agencies: What is the invoice id, status code, and details for the invoice with most number of payments.
+  gold:      SELECT T1.invoice_id ,  T2.invoice_status ,  T2.invoice_details FROM Payments AS T1 JOIN Invoices AS T2 ON T1.invoice_id  =  T2.invoice_id GROUP BY T1.invoice_id ORDER BY count(*) DESC LIMIT 1
+  predicted: SELECT i.invoice_id ,  invoice_status ,  invoice_details FROM Invoices AS i JOIN Payments AS payment ON i.invoice_id  =  payment.invoice_id GROUP BY i.invoice_id ORDER BY count(*) DESC LIMIT 1
+[EXEC OK] advertising_agencies: Return the invoice ids, statuses, and details for invoices with the most payments?
+  gold:      SELECT T1.invoice_id ,  T2.invoice_status ,  T2.invoice_details FROM Payments AS T1 JOIN Invoices AS T2 ON T1.invoice_id  =  T2.invoice_id GROUP BY T1.invoice_id ORDER BY count(*) DESC LIMIT 1
+  predicted: SELECT T1.invoice_id ,  T1.invoice_status ,  T1.invoice_details FROM Invoices AS T1 JOIN Payments AS T2 ON T1.invoice_id  =  T2.invoice_id GROUP BY T1.invoice_id ORDER BY count(*) DESC LIMIT 10
+[MATCH] advertising_agencies: How many staff do we have?
+  gold:      SELECT count(*) FROM Staff
+  predicted: SELECT count(*) FROM Staff
+[MATCH] advertising_agencies: Count the number of staff.
+  gold:      SELECT count(*) FROM Staff
+  predicted: SELECT count(*) FROM Staff
+[EXEC OK] advertising_agencies: Show the agency ids and the number of staff in each agent?
+  gold:      SELECT agency_id ,  count(*) FROM Staff GROUP BY agency_id
+  predicted: SELECT count(*) ,  T1.agency_id FROM Staff AS T1 JOIN Staff_in_Meetings AS T2 ON T1.staff_id = T2.staff_id GROUP BY T1.agency_id ORDER BY count(*) DESC
+[EXEC OK] advertising_agencies: Return the agency ids and number of staff in each.
+  gold:      SELECT agency_id ,  count(*) FROM Staff GROUP BY agency_id
+  predicted: SELECT T1.agency_id ,  COUNT(*) FROM Staff AS T1 JOIN Staff_in_Meetings AS T2 ON T1.staff_id = T2.staff_id GROUP BY T1.agency_id
+[EXEC OK] advertising_agencies: What is the agent id and details for the agency with most staff?
+  gold:      SELECT T1.agency_id ,  T2.agency_details FROM Staff AS T1 JOIN Agencies AS T2 ON T1.agency_id  =  T2.agency_id GROUP BY T1.agency_id ORDER BY count(*) DESC LIMIT 1
+  predicted: SELECT T1.agency_details ,  T2.staff_details FROM Agencies AS T1 JOIN Staff AS T2 ON T1.agency_id  =  T2.agency_id GROUP BY T1.agency_id ORDER BY count(*) DESC LIMIT 1;
+[MATCH] advertising_agencies: Return the id and detail for the agency with the most staff.
+  gold:      SELECT T1.agency_id ,  T2.agency_details FROM Staff AS T1 JOIN Agencies AS T2 ON T1.agency_id  =  T2.agency_id GROUP BY T1.agency_id ORDER BY count(*) DESC LIMIT 1
+  predicted: SELECT T1.agency_id ,  T1.agency_details FROM ( SELECT T2.agency_id ,  T2.agency_details FROM Staff AS T1 JOIN Agencies AS T2 ON T1.agency_id  =  T2.agency_id GROUP BY T1.agency_id ORDER BY COUNT(*) DESC LIMIT 1 ) AS T1
+[SQL ERROR] advertising_agencies: Show meeting outcome codes and the number of meeting in each outcome.
+  gold:      SELECT meeting_outcome ,  count(*) FROM Meetings GROUP BY meeting_outcome
+  predicted: SELECT T1.meeting_outcome ,  count(*) FROM Ref_Meeting_Codes AS T1 JOIN Staff_in_Meetings AS T2 JOIN Meetings AS T3 ON T2.meeting_id  =  T3.meeting_id JOIN Staff AS T4 ON T2.staff_id  =  T4.staff_id WHERE T3.end_date_time - T3.start_date_time BETWEEN 0 AND 48 GROUP BY T1.meeting_outcome;
+[EXEC OK] advertising_agencies: How many meetings had each meeting outcome?
+  gold:      SELECT meeting_outcome ,  count(*) FROM Meetings GROUP BY meeting_outcome
+  predicted: SELECT count(*) ,  T2.meeting_outcome FROM Staff_in_Meetings AS T1 JOIN Meetings AS T2 ON T1.meeting_id = T2.meeting_id GROUP BY T2.meeting_outcome
+[SQL ERROR] advertising_agencies: List the client ids and the number of meeting for each client.
+  gold:      SELECT client_id ,  count(*) FROM Meetings GROUP BY client_id
+  predicted: SELECT client_id ,  count(*) FROM Staff_in_Meetings GROUP BY client_id;
+[SQL ERROR] advertising_agencies: How many meetings are there for each client id?
+  gold:      SELECT client_id ,  count(*) FROM Meetings GROUP BY client_id
+  predicted: SELECT count(*) ,  T1.client_id FROM Staff_in_Meetings AS T1 JOINMeetings AS T2 ON T1.meeting_id = T2.meeting_id GROUP BY T1.client_id;
+[SQL ERROR] advertising_agencies: Show the meeting type codes and the number of meeting for each client.
+  gold:      SELECT meeting_type ,  count(*) FROM Meetings GROUP BY meeting_type
+  predicted: SELECT T1.client_id ,  T1.client_details ,  sum(T2.billable_yn = 'T') AS total_billable_meetings FROM Staff AS T1 JOINMeetings AS T2 ON T1.staff_id = T2.staff_id GROUP BY T1.client_id
+[SQL ERROR] advertising_agencies: How many meetings are there for each meeting type?
+  gold:      SELECT meeting_type ,  count(*) FROM Meetings GROUP BY meeting_type
+  predicted: SELECT count(*) ,  T1.meeting_type FROM (SELECT DISTINCT T1.meeting_type FROMMeetings AS T1 JOIN Staff_in_Meetings AS T2 ON T1.meeting_id = T2.meeting_id JOIN Staff AS T3 ON T2.staff_id = T3.staff_id UNION SELECT T1.meeting_type FROMMeetings AS T1 JOIN Staff AS T3 ON T1.staff_id = T3.staff_id) AS T4 GROUP BY T1.meeting_type
+[SQL ERROR] advertising_agencies: Show all meeting ids, meeting outcomes, meeting types and the details of the client atttending it.
+  gold:      SELECT T1.meeting_id ,  T1.meeting_outcome ,  T1.meeting_type ,  T2.client_details FROM meetings AS T1 JOIN clients AS T2 ON T1.client_id  =  T2.client_id
+  predicted: SELECT T2.meeting_id ,  T2.meeting_outcome ,  T2.meeting_type ,  T1.client_details FROM Staff_in_Meetings AS T1 JOINMeetings AS T2 ON T1.meeting_id = T2.meeting_id
+[SQL ERROR] advertising_agencies: What are the meeting ids, meeting outcomes, meeting types, and client details for all meetings?
+  gold:      SELECT T1.meeting_id ,  T1.meeting_outcome ,  T1.meeting_type ,  T2.client_details FROM meetings AS T1 JOIN clients AS T2 ON T1.client_id  =  T2.client_id
+  predicted: SELECT DISTINCT T2.meeting_id ,  T1.meeting_outcome ,   T2.meeting_type ,   T1.client_details FROM Staff_in_Meetings AS T1 JOIN Meetings AS T2 ON T1.meeting_id = T2.meeting_id
+[EXEC OK] advertising_agencies: Show the meeting ids and the number of staff in each meeting.
+  gold:      SELECT meeting_id ,  count(*) FROM Staff_in_meetings GROUP BY meeting_id
+  predicted: SELECT T1.meeting_id ,  count(*) FROM Staff_in_Meetings AS T1 JOIN Staff AS T2 ON T2.staff_id = T1.staff_id WHERE T2.agency_id = 1 GROUP BY T1.meeting_id
+[EXEC OK] advertising_agencies: Count the number of staff in each meeting by meeting id.
+  gold:      SELECT meeting_id ,  count(*) FROM Staff_in_meetings GROUP BY meeting_id
+  predicted: SELECT COUNT(*) ,  T1.meeting_id FROM Staff_in_Meetings AS T1 JOIN Meetings AS T2 ON T1.meeting_id = T2.meeting_id GROUP BY T1.meeting_id
+[MATCH] advertising_agencies: Show the staff id and the number of meetings attended by the staff who attended some meeting but had the lowest attendance.
+  gold:      SELECT staff_id ,  count(*) FROM Staff_in_meetings GROUP BY staff_id ORDER BY count(*) ASC LIMIT 1;
+  predicted: SELECT T1.staff_id ,  COUNT(*) FROM Staff AS T1 JOIN Staff_in_Meetings AS T2 ON T1.staff_id  =  T2.staff_id JOIN Meetings AS T3 ON T3.meeting_id  =  T2.meeting_id GROUP BY T1.staff_id ORDER BY COUNT(*) LIMIT 1
+[SQL ERROR] advertising_agencies: What is the staff id of the staff who attended the least meetings but attended some meeting?
+  gold:      SELECT staff_id ,  count(*) FROM Staff_in_meetings GROUP BY staff_id ORDER BY count(*) ASC LIMIT 1;
+  predicted: SELECT T2.staff_id FROM Staff AS T1 JOIN Staff_in_Meetings AS T2 ON T1.staff_id = T2.staff_id JOIN (SELECT T4.staff_id ,  min(T5.meeting_id) FROM Staff_in_Meetings AS T3 JOIN Meetings AS T5 ON T3.meeting_id = T5.meeting_id JOIN Staff AS T4 ON T3.staff_id = T4.staff_id GROUP BY T4.staff_id HAVING count(T5.meeting_id)  >= 1) AS T1_min_meetings GROUP BY T1_min_meetings HAVING count(*)  >= 1 ORDER BY count(*) LIMIT 1
+[MATCH] advertising_agencies: How many staff have attended a meeting?
+  gold:      SELECT count(DISTINCT staff_id) FROM Staff_in_meetings
+  predicted: SELECT count(DISTINCT T1.staff_id) FROM Staff_in_Meetings AS T1 JOIN Meetings AS T2 ON T1.meeting_id = T2.meeting_id
+[MATCH] advertising_agencies: Return the number of distinct staff who have attended a meeting?
+  gold:      SELECT count(DISTINCT staff_id) FROM Staff_in_meetings
+  predicted: SELECT count(DISTINCT staff_id) FROM Staff_in_Meetings
+[SQL ERROR] advertising_agencies: How many staff did not attend any meeting?
+  gold:      SELECT count(*) FROM Staff WHERE staff_id NOT IN ( SELECT staff_id FROM Staff_in_meetings )
+  predicted: SELECT count(*) FROM Staff WHERE employee_id NOT IN (SELECT DISTINCT t2.staff_id FROM Staff_in_Meetings AS T1 JOINMeetings AS T2 ON T1.meeting_id = T2.meeting_id)
+[SQL ERROR] advertising_agencies: Count the number of staff who did not attend any meeting.
+  gold:      SELECT count(*) FROM Staff WHERE staff_id NOT IN ( SELECT staff_id FROM Staff_in_meetings )
+  predicted: SELECT count(*) FROM Staff EXCEPT SELECT * FROM Staff_in_Meetings
+[SQL ERROR] advertising_agencies: What are the ids and details of the clients who have attended any meeting or have any invoice?
+  gold:      SELECT T1.client_id ,  T1.client_details FROM Clients AS T1 JOIN meetings AS T2 ON T1.client_id  =  T2.client_id UNION SELECT T1.client_id ,  T1.client_details FROM Clients AS T1 JOIN invoices AS T2 ON T1.client_id  =  T2.client_id
+  predicted: SELECT DISTINCT t3.client_details ,  t1.client_id FROM Invoices AS t1 JOIN Clients AS t3 ON t1.client_id  =  t3.client_id JOIN Staff_in_Meetings AS T2 ON T1.invoice_id  =  T2.invoice_id JOIN Staff AS T4 ON T2.staff_id  =  T4.staff_id WHERE T2.meeting_id  >  0 UNION SELECT DISTINCT t3.client_details ,  t1.client_id FROM Staff_in_Meetings AS T2 JOIN Clients AS t3 ON T2.client_id  =  t3.client_id JOIN Staff AS T4 ON T2.staff_id  =  T4.staff_id JOIN Invoices AS t1 ON T1.invoice_id  =  T2.invoice_id WHERE T2.meeting_id  >  0 AND T1.invoice_status  =  'Completed' UNION SELECT DISTINCT t3.client_details ,  t1.client_id FROM Staff_in_Meetings AS T2 JOIN Staff AS T4 ON T2.staff_id  =  T
+[SQL ERROR] advertising_agencies: Return the ids and details of clients who have attended a meeting or had an invoice.
+  gold:      SELECT T1.client_id ,  T1.client_details FROM Clients AS T1 JOIN meetings AS T2 ON T1.client_id  =  T2.client_id UNION SELECT T1.client_id ,  T1.client_details FROM Clients AS T1 JOIN invoices AS T2 ON T1.client_id  =  T2.client_id
+  predicted: SELECT DISTINCT T2.client_details FROM Staff AS T1 JOIN Staff_in_Meetings AS T2 ON T1.staff_id = T2.staff_id JOIN Clients AS T3 ON T3.client_id = T2.client_id WHERE T2.meeting_id IN (SELECT T1.meeting_id FROM Staff_in_Meetings AS T1 JOIN Staff AS T2 ON T1.staff_id = T2.staff_id) UNION SELECT DISTINCT T2.client_details FROM Invoices AS T1 JOIN Clients AS T2 ON T1.client_id = T2.client_id JOIN Staff AS T3 ON T1.staff_id = T3.staff_id WHERE T1.invoice_id IN (SELECT T1.invoice_id FROM Invoices AS T1 JOIN Staff AS T2 ON T1.staff_id = T2.staff_id)
+[SQL ERROR] advertising_agencies: What are the ids and details of the staff who have attended at least 1 meetings and have the detail with letter 's'?
+  gold:      SELECT staff_id ,  staff_details FROM staff WHERE staff_details LIKE "%s%" GROUP BY staff_id HAVING count(*)  >=  1
+  predicted: SELECT t3.staff_details ,  t1.staff_id FROM Staff AS t1 JOIN Staff_in_Meetings AS T2 ON T1.staff_id = T2.staff_id JOIN Meetings AS T3 ON T3.meeting_id = T2.meeting_id WHERE T2.meeting_id IN (SELECT T3.meeting_id FROM Staff_in_Meetings AS T2 JOIN Staff AS T1 ON T2.staff_id = T1.staff_id JOIN Meetings AS T3 ON T3.meeting_id = T2.meeting_id) INTERSECT SELECT T3.staff_id ,  T1.staff_details FROM Staff AS T1 JOIN Staff_in_Meetings AS T2 ON T1.staff_id = T2.staff_id JOINMeetings AS T3 ON T3.meeting_id = T2.meeting_id WHERE T2.meeting_id IN (SELECT T3.meeting_id FROM Staff_in_Meetings AS T2 JOIN Staff AS T1 ON T2.staff_id = T1.staff_id JOINMeetings AS T3 ON T3.meeting_id = T2.meeting_id) INTER
+[SQL ERROR] advertising_agencies: Return the ids and details of staff who have attended at least 1 meeting and have an s in their staff details?
+  gold:      SELECT staff_id ,  staff_details FROM staff WHERE staff_details LIKE "%s%" GROUP BY staff_id HAVING count(*)  >=  1
+  predicted: SELECT T1.staff_id ,  T1.staff_details FROM Staff AS T1 JOIN Staff_in_Meetings AS T2 ON T1.staff_id = T2.staff_id JOIN ( SELECT DISTINCT T3.staff_id ,  T3.staff_details FROM Staff_in_Meetings AS T3 ) AS T4 ON T2.meeting_id = T4.meeting_id WHERE T4.staff_details LIKE '%s%' GROUP BY T1.staff_id HAVING count(*) >= 1
+[SQL ERROR] advertising_agencies: What are the id, sic code and agency id of the client who has attended 1 meeting and has any invoice.
+  gold:      SELECT T1.client_id ,  T1.sic_code ,  T1.agency_id FROM clients AS T1 JOIN meetings AS T2 ON T1.client_id  =  T2.client_id GROUP BY T1.client_id HAVING count(*)  =  1 INTERSECT SELECT T1.client_id ,  T1.sic_code ,  T1.agency_id FROM clients AS T1 JOIN invoices AS T2 ON T1.client_id  =  T2.client_id
+  predicted: SELECT t1.client_id ,  t2.sic_code ,  t1.agency_id FROM Staff_in_Meetings AS T1 JOIN Clients AS T2 ON T1.client_id = T2.client_id WHERE T1.meeting_id IN (SELECT DISTINCT T3.meeting_id FROMMeetings AS T3 JOIN Invoices AS T4 ON T3.invoice_id = T4.invoice_id GROUP BY T4.client_id HAVING count(*)  =  1) GROUP BY T1.client_id UNION SELECT T1.client_id ,  t2.sic_code ,  t1.agency_id FROM Staff_in_Meetings AS T1 JOIN Clients AS T2 ON T1.client_id = T2.client_id WHERE T1.meeting_id IN (SELECT DISTINCT T3.meeting_id FROM Invoices AS T4 JOIN Staff_in_Meetings AS T5 ON T4.staff_id = T5.staff_id AND T4.invoice_status = "payment_in_processing" UNION SELECT DISTINCT T3.meeting_id FROM Invoices AS T4 JOIN Staff_in_Meetings AS T5 ON T
+[SQL ERROR] advertising_agencies: Return the ids, sic codes, and agency ids of clients who have attended 1 meeting and had an invoice.
+  gold:      SELECT T1.client_id ,  T1.sic_code ,  T1.agency_id FROM clients AS T1 JOIN meetings AS T2 ON T1.client_id  =  T2.client_id GROUP BY T1.client_id HAVING count(*)  =  1 INTERSECT SELECT T1.client_id ,  T1.sic_code ,  T1.agency_id FROM clients AS T1 JOIN invoices AS T2 ON T1.client_id  =  T2.client_id
+  predicted: SELECT DISTINCT T1.client_id ,  T2.sic_code ,  T1.agency_id FROM Clients AS T1 JOIN Customer_Attended_Meetings AS T2 ON T1.client_id  =  T2.client_id JOIN Invoices AS T3 ON T1.client_id = T3.client_id JOIN Staff_in_Meetings AS T4 ON T4.meeting_id = T2.meeting_id WHERE T2.attendance_count = 1 AND T3.invoice_details != "null" AND T4.staff_id != "null" GROUP BY T1.client_id;
+[SQL ERROR] advertising_agencies: List the start time, end time of each meeting, and the corresponding client detail and staff detail.
+  gold:      SELECT T1.start_date_time ,  T1.end_date_time ,  T2.client_details ,  T4.staff_details FROM meetings AS T1 JOIN clients AS T2 ON T1.client_id  =  T2.client_id JOIN staff_in_meetings AS T3 ON T1.meeting_id  =  T3.meeting_id JOIN staff AS T4 ON T3.staff_id  =  T4.staff_id
+  predicted: SELECT T1.start_date_time ,  T1.end_date_time ,  T2.client_details ,  T3.staff_details FROM Staff_in_Meetings AS T1 JOIN Clients AS T2 ON T1.client_id = T2.client_id JOIN Staff AS T3 ON T1.staff_id = T3.staff_id
+[SQL ERROR] advertising_agencies: What are the start and end times of each meeting, as well as the corresponding client and staff details the attendees?
+  gold:      SELECT T1.start_date_time ,  T1.end_date_time ,  T2.client_details ,  T4.staff_details FROM meetings AS T1 JOIN clients AS T2 ON T1.client_id  =  T2.client_id JOIN staff_in_meetings AS T3 ON T1.meeting_id  =  T3.meeting_id JOIN staff AS T4 ON T3.staff_id  =  T4.staff_id
+  predicted: SELECT T1.start_date_time ,  T1.end_date_time ,  T2.client_details ,  T3.staff_details FROM Staff_in_Meetings AS T1 JOIN Clients AS T2 ON T1.client_id = T2.client_id JOIN Staff AS T3 ON T1.staff_id = T3.staff_id
+
+============================================================
+Total examples:      2147
+Exact match:         364/2147 (17.0%)
+Executable:          928/2147 (43.2%)
+Execution accuracy:  625/2147 (29.1%)
+============================================================
+Saved detailed results to evaluation-results-with-schema.json
