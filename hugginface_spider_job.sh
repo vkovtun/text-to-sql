@@ -2,10 +2,10 @@
 #SBATCH --job-name=spider-improver
 #SBATCH --time=10:00:00
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
+#SBATCH --cpus-per-task=2
 #SBATCH --mem-per-cpu=8G
 #SBATCH --gpus=1
-#SBATCH --gres=gpumem:64G
+#SBATCH --gres=gpumem:24G
 #SBATCH --output=spider-improver_%j.out
 #SBATCH --error=spider-improver_%j.err
 #SBATCH --account=es_rdm
