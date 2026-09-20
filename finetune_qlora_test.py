@@ -8,52 +8,14 @@ from pathlib import Path
 from typing import Any
 from transformers import AutoModelForMultimodalLM, AutoProcessor
 from random import randint
-import re
-import sqlite3
 from transformers import pipeline, GenerationConfig, pipeline
-from datasets import Dataset, DatasetDict
 import json
 
+from spider_prompts import build_prompt_messages, load_tables, schema_to_text
+
 DATA_DIR = Path(__file__).parent / "spider_data"
-TEST_DB_DIR = DATA_DIR / "test_database"
+TEST_TABLES_JSON = DATA_DIR / "test_tables.json"
 
-# System message for the assistant
-system_message = """You are a text to SQL query translator. Users will ask you questions in English and you will generate a SQL query based on the provided SCHEMA."""
-
-# User prompt that combines the user query and the schema
-user_prompt = """Given the <USER_QUERY> and the <SCHEMA>, generate the corresponding SQL command to retrieve the desired data, considering the query's syntax, semantics, and schema constraints.
-
-<SCHEMA>
-{context}
-</SCHEMA>
-
-<USER_QUERY>
-{question}
-</USER_QUERY>
-"""
-
-def get_schema(db_id: str, db_dir: Path = TEST_DB_DIR) -> str:
-    """Return the CREATE TABLE statements for a Spider database as schema context."""
-    db_path = db_dir / db_id / f"{db_id}.sqlite"
-    with sqlite3.connect(db_path) as conn:
-        rows = conn.execute(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND sql IS NOT NULL"
-        ).fetchall()
-    return "\n\n".join(row[0] for row in rows)
-
-
-def create_conversation(sample, idx):
-    user_content = user_prompt.format(
-        context=get_schema(sample["db_id"]),
-        question=sample["question"],
-    )
-    return {
-        "messages": [
-            {"role": "system", "content": system_message},
-            {"role": "user", "content": user_content},
-            {"role": "assistant", "content": sample["query"]},
-        ]
-    }
 
 def load_json(path: Path) -> list[dict[str, Any]]:
     """Load a Spider-format JSON file into a list of example records."""
@@ -66,15 +28,8 @@ def load_test_dataset(data_dir: Path = DATA_DIR) -> list[dict[str, Any]]:
     return load_json(data_dir / "test.json")
 
 
-def to_conversations(samples: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Reduce raw Spider records (with their heterogeneous 'sql' parse trees)
-    down to just the {question, query} fields the model actually trains on,
-    before they ever reach Arrow/pyarrow schema inference."""
-    return [create_conversation(sample, idx) for idx, sample in enumerate(samples)]
-
-dataset = DatasetDict({
-    "test": Dataset.from_list(to_conversations(load_test_dataset())),
-})
+test_samples = load_test_dataset()
+test_tables = load_tables(TEST_TABLES_JSON)
 
 model_id = str(Path(__file__).parent / "out" / "text2sql_qlora")
 
@@ -96,25 +51,18 @@ config.eos_token_id = [processor.tokenizer.convert_tokens_to_ids("<turn|>")]
 pipe = pipeline("text-generation", model=model, tokenizer=processor.tokenizer)
 
 # Load a random sample from the test dataset
-rand_idx = randint(0, len(dataset["test"]))
-test_sample = dataset["test"][rand_idx]
+test_sample = test_samples[randint(0, len(test_samples) - 1)]
 
-# Convert as test example into a prompt with the Gemma template
-prompt = processor.tokenizer.apply_chat_template(test_sample["messages"][:2], tokenize=False, add_generation_prompt=True)
+# Convert the test example into the prompt the model was trained on, rendered with the Gemma template
+messages = build_prompt_messages(test_sample["question"], test_sample["db_id"], test_tables)
+prompt = processor.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
 print(prompt)
 
 # Generate our SQL query.
 outputs = pipe(text_inputs=prompt, generation_config=config)
 
-# Extract the user query and original answer
-content1 = test_sample['messages'][1]['content']
-content2 = test_sample['messages'][2]['content']
-
-print("content1=", content1)
-print("content2=", content2)
-
 print(f"DB ID: ", test_sample["db_id"])
-print(f"Context:\n", re.search(r'<SCHEMA>\n(.*?)\n</SCHEMA>', content1, re.DOTALL).group(1).strip())
-print(f"Query:\n", re.search(r'<USER_QUERY>\n(.*?)\n</USER_QUERY>', content1, re.DOTALL).group(1).strip())
-print(f"Original Answer:\n{content2}")
-print(f"Generated Answer:\n{outputs[0]['generated_text'][len(prompt):].strip().removesuffix('<turn|>')}")
+print(f"Schema:\n", schema_to_text(test_tables[test_sample["db_id"]]))
+print(f"Question:\n", test_sample["question"])
+print(f"Original Answer:\n{test_sample['query']}")
+print(f"Generated Answer:\n{outputs[0]['generated_text'][len(prompt):].split('<turn|>')[0].strip()}")
