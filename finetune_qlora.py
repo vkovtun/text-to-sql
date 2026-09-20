@@ -78,6 +78,12 @@ DATA_DIR = Path(__file__).parent / "spider_data_jsonl"
 TRAIN_JSONL = DATA_DIR / "spider_train_sft.jsonl"
 DEV_JSONL = DATA_DIR / "spider_dev_sft.jsonl"
 
+# Everything the script writes locally lives under OUTPUT_DIR: one sub-directory
+# per training run (adapter, checkpoints, TensorBoard logs), the merged model, and
+# the W&B run files.
+OUTPUT_DIR = Path(__file__).parent / "out"
+MERGED_MODEL_DIR = OUTPUT_DIR / "text2sql_qlora"
+
 # Run identity, shared between the Hub repo name and the W&B run
 PROJECT_NAME = "gemma-text-to-sql"
 
@@ -265,6 +271,8 @@ def main() -> None:
 
     # Configure Weights & Biases to record against our project
     os.environ["WANDB_PROJECT"] = PROJECT_NAME
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    os.environ["WANDB_DIR"] = str(OUTPUT_DIR)
     os.environ["WANDB_LOG_MODEL"] = "false"
     os.environ["WANDB_WATCH"] = "false"
 
@@ -332,7 +340,7 @@ def main() -> None:
     """Before you can start your training, you need to define the hyperparameter you want to use in a `SFTConfig` instance."""
 
     args = SFTConfig(
-        output_dir=project_run_name,            # directory to save and repository id
+        output_dir=str(OUTPUT_DIR / project_run_name), # directory to save; its basename is the Hub repo name
         max_length=LITE_MAX_LENGTH if LITE_MODE else FULL_MAX_LENGTH,       # max length for model and packing of the dataset
         num_train_epochs=LITE_NUM_EPOCHS if LITE_MODE else FULL_NUM_EPOCHS, # number of training epochs
         per_device_train_batch_size=1,          # batch size per device during training
@@ -420,10 +428,10 @@ def main() -> None:
     # Merge LoRA and base model and save
     peft_model = PeftModel.from_pretrained(model, args.output_dir)
     merged_model = peft_model.merge_and_unload()
-    merged_model.save_pretrained("text2sql_qlora", safe_serialization=True, max_shard_size="2GB")
+    merged_model.save_pretrained(MERGED_MODEL_DIR, safe_serialization=True, max_shard_size="2GB")
 
     processor = AutoProcessor.from_pretrained("google/gemma-4-E2B-it")
-    processor.save_pretrained("text2sql_qlora")
+    processor.save_pretrained(MERGED_MODEL_DIR)
 
 
 if __name__ == "__main__":

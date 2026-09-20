@@ -27,7 +27,7 @@ from transformers import AutoModelForMultimodalLM, AutoProcessor, GenerationConf
 
 DATA_DIR = Path(__file__).parent / "spider_data"
 TEST_DB_DIR = DATA_DIR / "test_database"
-MODEL_ID = "text2sql_qlora"
+MODEL_ID = str(Path(__file__).parent / "out" / "text2sql_qlora")
 
 GREEN = "\033[92m"
 YELLOW = "\033[93m"

@@ -76,7 +76,7 @@ dataset = DatasetDict({
     "test": Dataset.from_list(to_conversations(load_test_dataset())),
 })
 
-model_id = "text2sql_qlora"
+model_id = str(Path(__file__).parent / "out" / "text2sql_qlora")
 
 # Load Model with PEFT adapter
 model = AutoModelForMultimodalLM.from_pretrained(

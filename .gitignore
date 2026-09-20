@@ -6,3 +6,4 @@ gemma-*
 merged_model
 spider_data*
 wandb_runs
+out/
