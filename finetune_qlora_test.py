@@ -76,7 +76,7 @@ dataset = DatasetDict({
     "test": Dataset.from_list(to_conversations(load_test_dataset())),
 })
 
-model_id = "merged_model"
+model_id = "text2sql_qlora"
 
 # Load Model with PEFT adapter
 model = AutoModelForMultimodalLM.from_pretrained(
@@ -113,6 +113,7 @@ content2 = test_sample['messages'][2]['content']
 print("content1=", content1)
 print("content2=", content2)
 
+print(f"DB ID: ", test_sample["db_id"])
 print(f"Context:\n", re.search(r'<SCHEMA>\n(.*?)\n</SCHEMA>', content1, re.DOTALL).group(1).strip())
 print(f"Query:\n", re.search(r'<USER_QUERY>\n(.*?)\n</USER_QUERY>', content1, re.DOTALL).group(1).strip())
 print(f"Original Answer:\n{content2}")

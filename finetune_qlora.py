@@ -100,7 +100,7 @@ MODEL_ID = "google/gemma-4-E2B" # @param ["google/gemma-4-E2B","google/gemma-4-E
 
 # Quick local smoke-test switch: trims the dataset and lightens hyperparameters so the
 # whole pipeline can be exercised in a few minutes on a single 16GB GPU. Set to False for a full training run.
-LITE_MODE = True
+LITE_MODE = False
 
 LITE_TRAIN_SAMPLES = 500
 LITE_EVAL_SAMPLES = 125
@@ -207,15 +207,6 @@ def load_dev_dataset(data_dir: Path = DATA_DIR) -> list[dict[str, Any]]:
     """Load the dev split."""
     return load_json(data_dir / "dev.json")
 
-
-# # Load dataset from the hub
-# dataset = load_dataset("philschmid/gretel-synthetic-text-to-sql", split="train")
-# dataset = dataset.select(range(1250))
-
-# # Convert dataset to OAI messages
-# dataset = dataset.map(create_conversation, with_indices=True, remove_columns=dataset.features)
-# # split dataset into 80% training samples and 20% test samples
-# dataset = dataset.train_test_split(test_size=0.2, shuffle=False)
 
 def to_conversations(samples: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Reduce raw Spider records (with their heterogeneous 'sql' parse trees)
@@ -384,7 +375,8 @@ def main() -> None:
         optim="adamw_torch_fused",              # use fused adamw optimizer
         logging_steps=LITE_LOGGING_STEPS if LITE_MODE else FULL_LOGGING_STEPS, # log every N steps
         save_strategy="no" if LITE_MODE else "epoch", # skip intermediate checkpoints in lite mode
-        eval_strategy="epoch",                  # evaluate checkpoint every epoch
+        eval_strategy="steps",                  # evaluate checkpoint every eval_steps steps
+        eval_steps=500,
         learning_rate=2e-4,                     # learning rate
         fp16=True if torch_dtype == torch.float16 else False,  # use float16 precision
         bf16=True if torch_dtype == torch.bfloat16 else False, # use bfloat16 precision
