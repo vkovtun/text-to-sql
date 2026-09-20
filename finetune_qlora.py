@@ -100,11 +100,19 @@ LITE_MAX_LENGTH = 512
 LITE_NUM_EPOCHS = 1
 LITE_LOGGING_STEPS = 1
 LITE_CHECKPOINT_EVAL_STEPS = 100
+LITE_GRAD_ACCUM_STEPS = 1
 
 FULL_MAX_LENGTH = 1024
 FULL_NUM_EPOCHS = 3
 FULL_LOGGING_STEPS = 10
-FULL_CHECKPOINT_EVAL_STEPS = 500
+# Steps are optimizer steps, i.e. one per FULL_GRAD_ACCUM_STEPS samples (~430 per epoch),
+# so 30 steps keeps the eval spacing at ~500 samples, same as before accumulation.
+FULL_CHECKPOINT_EVAL_STEPS = 30
+# Effective batch size = per_device_train_batch_size (1, sized for a 16GB GPU) x this.
+FULL_GRAD_ACCUM_STEPS = 16
+
+# Linear LR warmup, as a fraction of total optimizer steps, followed by cosine decay.
+WARMUP_RATIO = 0.05
 
 """## Load the fine-tuning dataset
 
@@ -219,8 +227,10 @@ def build_collate_fn(processor, max_length: int):
             max_length=max_length,
         )
 
-        # Tokenized prompts, unpadded, purely to measure the prefix to mask
-        prompt_ids = processor(text=prompt_texts)["input_ids"]
+        # Tokenized prompts, purely to measure the prefix to mask. padding=False is
+        # required: the Gemma processor pads by default, which would prepend pad
+        # tokens to every prompt and break the prefix comparison below.
+        prompt_ids = processor(text=prompt_texts, padding=False)["input_ids"]
 
         # The labels are the input_ids, and we mask the padding tokens and audio tokens in the loss computation
         labels = batch["input_ids"].clone()
@@ -327,13 +337,12 @@ def main() -> None:
     """The `SFTTrainer` supports a built-in integration with `peft`, which makes it straightforward to efficiently tune LLMs using QLoRA. You only need to create a `LoraConfig` and provide it to the trainer."""
 
     peft_config = LoraConfig(
-        lora_alpha=16,
-        lora_dropout=0.05,
+        lora_alpha=32,
+        lora_dropout=0.1,
         r=16,
         bias="none",
         # no target_modules — PEFT's Gemma 4 defaults scope to the LM layers
         task_type="CAUSAL_LM",
-        modules_to_save=["lm_head", "embed_tokens"], # make sure to save the lm_head and embed_tokens as you train the special tokens
         ensure_weight_tying=True,
     )
 
@@ -344,21 +353,32 @@ def main() -> None:
         max_length=LITE_MAX_LENGTH if LITE_MODE else FULL_MAX_LENGTH,       # max length for model and packing of the dataset
         num_train_epochs=LITE_NUM_EPOCHS if LITE_MODE else FULL_NUM_EPOCHS, # number of training epochs
         per_device_train_batch_size=1,          # batch size per device during training
+        gradient_accumulation_steps=LITE_GRAD_ACCUM_STEPS if LITE_MODE else FULL_GRAD_ACCUM_STEPS, # effective batch = 1 x this
         per_device_eval_batch_size=1,           # batch size per device during evaluation
         optim="adamw_torch_fused",              # use fused adamw optimizer
+        #  optim="paged_adamw_8bit",
         logging_steps=LITE_LOGGING_STEPS if LITE_MODE else FULL_LOGGING_STEPS, # log every N steps
-        save_strategy="no" if LITE_MODE else "epoch", # skip intermediate checkpoints in lite mode
+        save_strategy="no" if LITE_MODE else "best", # "best": save only when eval_loss improves; lite mode skips checkpoints
         eval_strategy="steps",                  # evaluate checkpoint every eval_steps steps
         eval_steps=LITE_CHECKPOINT_EVAL_STEPS if LITE_MODE else FULL_CHECKPOINT_EVAL_STEPS,
         learning_rate=5e-5,                     # learning rate
         fp16=True if torch_dtype == torch.float16 else False,  # use float16 precision
         bf16=True if torch_dtype == torch.bfloat16 else False, # use bfloat16 precision
-        lr_scheduler_type="constant",           # use constant learning rate scheduler
+        lr_scheduler_type="cosine",             # decay the LR to 0 so training can settle
+        warmup_steps=WARMUP_RATIO,              # a float < 1 is a fraction of total optimizer steps
         push_to_hub=not LITE_MODE,              # don't push smoke-test runs to the hub
         report_to=["wandb", "tensorboard"],     # report metrics to W&B and tensorboard
         run_name=run_name,                      # W&B run name
         dataset_kwargs={"skip_prepare_dataset": True}, # important for collator
         remove_unused_columns = False,                 # important for collator
+        load_best_model_at_end=not LITE_MODE,   # restore the lowest-eval-loss adapter before the final save/merge
+        metric_for_best_model="eval_loss",
+        greater_is_better=False,
+        save_total_limit=1,                     # each checkpoint is ~3GB; only the best one is kept
+        # No assistant_only_loss / dataset_text_field: response-only loss is built by
+        # build_collate_fn (skip_prepare_dataset bypasses TRL's own masking), and
+        # assistant_only_loss=True makes SFTTrainer demand a `{% generation %}` chat
+        # template, which Gemma 4's does not have.
     )
 
     """Now that the DB schema is embedded in each prompt, some examples (schema-heavy DBs
