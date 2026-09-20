@@ -1,5 +1,6 @@
 .env
 .venv
+__pycache_
 EULER
 gemma-*
 merged_model
