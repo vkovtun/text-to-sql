@@ -53,9 +53,7 @@ echo ""
 cd "$SLURM_SUBMIT_DIR"
 echo "Running from: $PWD"
 
-# Compute nodes have no direct internet access by default; load the proxy
-# module so pip installs and Hugging Face Hub downloads/login (called from
-# inside huggingface_text_finetune_qlora.py) can actually reach the outside.
+# Compute nodes have no direct internet access by default.
 module load eth_proxy
 
 # Activate the conda environment (must already exist — see setup commands
@@ -86,7 +84,7 @@ echo ""
 echo "=========================================="
 echo "Starting fine-tuning job..."
 echo "=========================================="
-python huggingface_text_finetune_qlora.py
+python finetune_qlora.py
 
 echo ""
 echo "=========================================="
