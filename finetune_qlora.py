@@ -50,20 +50,6 @@ This guide demonstrates the use of [Quantized Low-Rank Adaptation (QLoRA)](https
 The first step is to install Hugging Face Libraries, including TRL, and datasets to fine-tune open model, including different RLHF and alignment techniques.
 """
 
-# Commented out IPython magic to ensure Python compatibility.
-# Install Pytorch & other libraries
-# %pip install torch tensorboard
-# %pip install -U torchao
-
-# Install Transformers
-# %pip install "transformers>=5.10.1"
-
-# Install Hugging Face libraries
-# %pip install datasets accelerate evaluate bitsandbytes trl "peft>=0.19.0" protobuf sentencepiece
-
-# COMMENT IN: if you are running on a GPU that supports BF16 data type and flash attn, such as NVIDIA L4 or NVIDIA A100
-#%pip install flash-attn
-
 """_Note: If you are using a GPU with Ampere architecture (such as NVIDIA L4) or newer, you can use Flash attention. Flash Attention is a method that significantly speeds computations up and reduces memory usage from quadratic to linear in sequence length, leading to acelerating training up to 3x. Learn more at [FlashAttention](https://github.com/Dao-AILab/flash-attention/tree/main)._
 
 You need a valid Hugging Face Token to publish your model. If you are running inside a Google Colab, you can securely use your Hugging Face Token using the Colab secrets otherwise you can set the token as directly in the `login` method. Make sure your token has write access too, as you push your model to the Hub during training.
@@ -71,12 +57,9 @@ You need a valid Hugging Face Token to publish your model. If you are running in
 
 from pathlib import Path
 from typing import Any
-from functools import lru_cache
 from datetime import datetime
 import json
-import re
-import sqlite3
-from datasets import Dataset, DatasetDict, load_dataset
+from datasets import Dataset, DatasetDict
 
 import torch
 import wandb
@@ -89,8 +72,11 @@ from huggingface_hub import login
 import os
 from dotenv import load_dotenv
 
-DATA_DIR = Path(__file__).parent / "spider_data"
-DATABASE_DIR = DATA_DIR / "database"
+# Pre-built SFT datasets (see spider_sft_data_prep.ipynb). Each line is one JSON
+# record carrying a chat-formatted prompt/completion pair plus Spider metadata.
+DATA_DIR = Path(__file__).parent / "spider_data_jsonl"
+TRAIN_JSONL = DATA_DIR / "spider_train_sft.jsonl"
+DEV_JSONL = DATA_DIR / "spider_dev_sft.jsonl"
 
 # Run identity, shared between the Hub repo name and the W&B run
 PROJECT_NAME = "gemma-text-to-sql"
@@ -107,135 +93,116 @@ LITE_EVAL_SAMPLES = 125
 LITE_MAX_LENGTH = 512
 LITE_NUM_EPOCHS = 1
 LITE_LOGGING_STEPS = 1
+LITE_CHECKPOINT_EVAL_STEPS = 100
 
 FULL_MAX_LENGTH = 1024
 FULL_NUM_EPOCHS = 3
 FULL_LOGGING_STEPS = 10
+FULL_CHECKPOINT_EVAL_STEPS = 500
 
-"""## Create and prepare the fine-tuning dataset
+"""## Load the fine-tuning dataset
 
-[Hugging Face TRL](https://huggingface.co/docs/trl/en/index) supports automatic templating of conversation dataset formats. This means you only need to convert your dataset into the right json objects, and `trl` takes care of templating and putting it into the right format.
+The prompts are pre-built by `spider_sft_data_prep.ipynb`, which writes one JSON
+record per line into `spider_data_jsonl/`. Each record is already chat-formatted,
+so this script no longer renders prompt templates or reads schemas out of the
+SQLite files — it only normalises the records into the prompt/completion layout
+the collator expects:
 
 ```
-{"messages": [{"role": "system", "content": "You are..."}, {"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]}
-{"messages": [{"role": "system", "content": "You are..."}, {"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]}
-{"messages": [{"role": "system", "content": "You are..."}, {"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]}
+{
+  "prompt": [{"role": "system", ...}, {"role": "user", ...}],
+  "completion": [{"role": "assistant", "content": "SELECT ..."}],
+  "db_id": "department_management",
+  "gold_sql": "SELECT ..."
+}
 ```
 
-The [philschmid/gretel-synthetic-text-to-sql](https://huggingface.co/datasets/philschmid/gretel-synthetic-text-to-sql) contains over 100k samples. To keep the guide small, it is downsampled to only use 10,000 samples.
-
-You can now use the Hugging Face Datasets library to load the dataset and create a prompt template to combine the natural language instruction, schema definition and add a system message for your assistant.
+Records written in the single-list `messages` layout are accepted too: the
+trailing assistant turn is split off as the completion.
 """
 
-# System message for the assistant
-system_message = """You are a text to SQL query translator. Users will ask you questions in English and you will generate a SQL query based on the provided SCHEMA."""
-
-# User prompt that combines the user query and the schema
-user_prompt = """Given the <USER_QUERY> and the <SCHEMA>, generate the corresponding SQL command to retrieve the desired data, considering the query's syntax, semantics, and schema constraints.
-
-<SCHEMA>
-{context}
-</SCHEMA>
-
-<USER_QUERY>
-{question}
-</USER_QUERY>
-"""
+# Columns carried alongside the conversation, purely for debugging/eval joins.
+METADATA_COLUMNS = ("db_id", "gold_sql")
 
 
-CREATE_TABLE_RE = re.compile(r"CREATE\s+TABLE\b.*?;", re.IGNORECASE | re.DOTALL)
+def split_messages(messages: list[dict[str, str]]) -> tuple[list, list]:
+    """Split a flat `messages` list into (prompt, completion) at the final
+    assistant turn, so `messages`-style records train identically to
+    prompt/completion ones."""
+    for idx in range(len(messages) - 1, -1, -1):
+        if messages[idx]["role"] == "assistant":
+            return messages[:idx], messages[idx:]
+    raise ValueError("record has no assistant turn to train on")
 
 
-@lru_cache(maxsize=None)
-def load_schema(db_id: str) -> str:
-    """Return the CREATE TABLE DDL for a Spider database.
+def normalize_record(record: dict[str, Any]) -> dict[str, Any]:
+    """Reduce one raw JSONL record to the fields the trainer uses.
 
-    Prefers the pre-written database/<db_id>/schema.sql; falls back to
-    introspecting the .sqlite file's sqlite_master table for the handful
-    of Spider DBs that ship without a schema.sql.
+    Anything else in the record (e.g. the pre-rendered `text` field, or the raw
+    `question`) is dropped here, before it ever reaches Arrow's schema
+    inference."""
+    if "prompt" in record and "completion" in record:
+        prompt, completion = record["prompt"], record["completion"]
+    elif "messages" in record:
+        prompt, completion = split_messages(record["messages"])
+    else:
+        raise ValueError(
+            "record must contain either 'prompt' and 'completion' or 'messages'; "
+            f"got keys {sorted(record)}"
+        )
 
-    Several schema.sql files (e.g. soccer_1 at 322MB, baseball_1 at 57MB)
-    are full dumps containing millions of INSERT statements alongside the
-    DDL, so only the CREATE TABLE statements are extracted — embedding the
-    full dump blew past pyarrow's 2GB string-array limit when building the
-    dataset.
-    """
-    schema_path = DATABASE_DIR / db_id / "schema.sql"
-    if schema_path.exists():
-        raw_sql = schema_path.read_text(encoding="utf-8")
-        return "\n".join(s.strip() for s in CREATE_TABLE_RE.findall(raw_sql))
-
-    sqlite_path = DATABASE_DIR / db_id / f"{db_id}.sqlite"
-    con = sqlite3.connect(sqlite_path)
-    try:
-        rows = con.execute(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND sql IS NOT NULL"
-        ).fetchall()
-    finally:
-        con.close()
-    return ";\n".join(row[0] for row in rows).strip() + ";"
+    normalized = {"prompt": prompt, "completion": completion}
+    for column in METADATA_COLUMNS:
+        normalized[column] = record.get(column, "")
+    return normalized
 
 
-def create_conversation(sample, idx):
-    return {
-        "messages": [
-            {"role": "system", "content": system_message},
-            {
-                "role": "user",
-                "content": user_prompt.format(
-                    question=sample["question"], context=load_schema(sample["db_id"])
-                ),
-            },
-            {"role": "assistant", "content": sample["query"]},
-        ]
-    }
-
-def load_json(path: Path) -> list[dict[str, Any]]:
-    """Load a Spider-format JSON file into a list of example records."""
+def load_sft_jsonl(path: Path) -> list[dict[str, Any]]:
+    """Load a JSONL SFT split into normalised prompt/completion records."""
     with path.open(encoding="utf-8") as f:
-        return json.load(f)
+        return [normalize_record(json.loads(line)) for line in f if line.strip()]
 
 
-def load_train_dataset(data_dir: Path = DATA_DIR) -> list[dict[str, Any]]:
-    """Load the training split: train_spider.json concatenated with train_others.json."""
-    train_spider = load_json(data_dir / "train_spider.json")
-    train_others = load_json(data_dir / "train_others.json")
-    return train_spider + train_others
-
-
-def load_dev_dataset(data_dir: Path = DATA_DIR) -> list[dict[str, Any]]:
-    """Load the dev split."""
-    return load_json(data_dir / "dev.json")
-
-
-def to_conversations(samples: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Reduce raw Spider records (with their heterogeneous 'sql' parse trees)
-    down to just the {question, query} fields the model actually trains on,
-    before they ever reach Arrow/pyarrow schema inference."""
-    return [create_conversation(sample, idx) for idx, sample in enumerate(samples)]
+def conversation(example: dict[str, Any]) -> list[dict[str, str]]:
+    """The full conversation (prompt turns followed by the assistant answer)."""
+    return example["prompt"] + example["completion"]
 
 
 def build_token_length_fn(processor):
-    """Return a function that measures the chat-templated token length of a
-    list of messages, for filtering out examples that won't fit max_length."""
-    def token_length(messages: list[dict[str, str]]) -> int:
+    """Return a function that measures the chat-templated token length of an
+    example, for filtering out examples that won't fit max_length."""
+    def token_length(example: dict[str, Any]) -> int:
         full_text = processor.apply_chat_template(
-            messages, add_generation_prompt=False, tokenize=False
+            conversation(example), add_generation_prompt=False, tokenize=False
         ).strip()
         return len(processor(text=[full_text])["input_ids"][0])
     return token_length
 
 
 def build_collate_fn(processor, max_length: int):
-    """Return a data collator bound to the given processor and max_length."""
+    """Return a data collator bound to the given processor and max_length.
+
+    Because the dataset keeps the prompt and the completion apart, the loss mask
+    is derived from the exact tokenised length of the chat-templated prompt
+    instead of scanning for the assistant header — the prompt rendered with
+    `add_generation_prompt=True` is by construction a prefix of the full
+    conversation."""
     def collate_fn(examples):
         texts = []
+        prompt_texts = []
 
         for example in examples:
             full_text = processor.apply_chat_template(
-                example["messages"], add_generation_prompt=False, tokenize=False
+                conversation(example), add_generation_prompt=False, tokenize=False
             )
             texts.append(full_text.strip())
+            # No .strip() here: the generation prompt's trailing newline is part
+            # of the prefix that must be masked out.
+            prompt_texts.append(
+                processor.apply_chat_template(
+                    example["prompt"], add_generation_prompt=True, tokenize=False
+                )
+            )
 
         # Tokenize the texts and process the audios
         batch = processor(
@@ -246,35 +213,32 @@ def build_collate_fn(processor, max_length: int):
             max_length=max_length,
         )
 
+        # Tokenized prompts, unpadded, purely to measure the prefix to mask
+        prompt_ids = processor(text=prompt_texts)["input_ids"]
+
         # The labels are the input_ids, and we mask the padding tokens and audio tokens in the loss computation
         labels = batch["input_ids"].clone()
 
-        target_tokens = [
-            processor.tokenizer.convert_tokens_to_ids("<|turn>"),
-            processor.tokenizer.convert_tokens_to_ids("model"),
-            processor.tokenizer.convert_tokens_to_ids("\n")
-        ]
-        target_len = len(target_tokens)
-
         for i in range(labels.size(0)):
             row_tokens = batch["input_ids"][i].tolist()
+            attention_mask = batch["attention_mask"][i].tolist()
 
-            # Find where the assistant block begins
-            assistant_start_idx = None
-            for idx in range(len(row_tokens) - target_len + 1):
-                if row_tokens[idx : idx + target_len] == target_tokens:
-                    # We want to keep loss calculation on the assistant transcription tokens,
-                    # so we move the index right past the assistant header ('<|turn>\nmodel\n')
-                    assistant_start_idx = idx + target_len
-                    break
+            # First non-padding position, so the mask is correct whether the
+            # processor pads on the left or on the right
+            row_start = attention_mask.index(1)
+            row_end = row_start + sum(attention_mask)
+            prompt_end = min(row_start + len(prompt_ids[i]), row_end)
 
-            if assistant_start_idx is not None:
-                # Mask everything from index 0 up to the start of the actual Japanese text response
-                labels[i, :assistant_start_idx] = -100
-            else:
-                # Fallback safety: if template matching fails for an anomalous row, mask padding anyway
+            if row_tokens[row_start:prompt_end] != prompt_ids[i][: prompt_end - row_start]:
+                print("WARNING: prompt tokens are not a prefix of the conversation; "
+                      "masking the whole row to avoid training on prompt text.")
+                prompt_end = row_end
+
+            if prompt_end >= row_end:
                 print("WARNING: maybe the sample is too long, try to increase `token_limit` value.")
-                labels[i, labels[i] == processor.tokenizer.pad_token_id] = -100
+
+            # Keep loss on the assistant answer only
+            labels[i, :prompt_end] = -100
 
         # Mask tokens for not being used in the loss computation
         labels[labels == processor.tokenizer.pad_token_id] = -100
@@ -308,13 +272,14 @@ def main() -> None:
 
     # Load the dataset
     dataset = DatasetDict({
-        "train": Dataset.from_list(to_conversations(load_train_dataset())),
-        "validation": Dataset.from_list(to_conversations(load_dev_dataset())),
+        "train": Dataset.from_list(load_sft_jsonl(TRAIN_JSONL)),
+        "validation": Dataset.from_list(load_sft_jsonl(DEV_JSONL)),
     })
+    print(f"Loaded {len(dataset['train'])} train / {len(dataset['validation'])} validation examples")
 
-    # Print formatted user prompt
-    for item in dataset["train"][0]:
-        print(item)
+    # Print the first formatted conversation
+    for message in conversation(dataset["train"][0]):
+        print(message)
 
     """## Fine-tune Gemma using TRL and the SFTTrainer
 
@@ -376,8 +341,8 @@ def main() -> None:
         logging_steps=LITE_LOGGING_STEPS if LITE_MODE else FULL_LOGGING_STEPS, # log every N steps
         save_strategy="no" if LITE_MODE else "epoch", # skip intermediate checkpoints in lite mode
         eval_strategy="steps",                  # evaluate checkpoint every eval_steps steps
-        eval_steps=500,
-        learning_rate=2e-4,                     # learning rate
+        eval_steps=LITE_CHECKPOINT_EVAL_STEPS if LITE_MODE else FULL_CHECKPOINT_EVAL_STEPS,
+        learning_rate=5e-5,                     # learning rate
         fp16=True if torch_dtype == torch.float16 else False,  # use float16 precision
         bf16=True if torch_dtype == torch.bfloat16 else False, # use bfloat16 precision
         lr_scheduler_type="constant",           # use constant learning rate scheduler
@@ -401,7 +366,7 @@ def main() -> None:
     for split in dataset:
         before = len(dataset[split])
         dataset[split] = dataset[split].filter(
-            lambda example: token_length(example["messages"]) <= args.max_length
+            lambda example: token_length(example) <= args.max_length
         )
         dropped = before - len(dataset[split])
         print(f"{split}: dropped {dropped}/{before} examples exceeding max_length={args.max_length} tokens")
