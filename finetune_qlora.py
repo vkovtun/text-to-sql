@@ -79,10 +79,14 @@ TRAIN_JSONL = DATA_DIR / "spider_train_sft.jsonl"
 DEV_JSONL = DATA_DIR / "spider_dev_sft.jsonl"
 
 # Everything the script writes locally lives under OUTPUT_DIR: one sub-directory
-# per training run (adapter, checkpoints, TensorBoard logs), the merged model, and
-# the W&B run files.
+# per training run (adapter, checkpoints, TensorBoard logs, merged model), and the
+# W&B run files.
 OUTPUT_DIR = Path(__file__).parent / "out"
-MERGED_MODEL_DIR = OUTPUT_DIR / "text2sql_qlora"
+# Each run merges its adapter into the base model under <run dir>/MERGED_SUBDIR.
+MERGED_SUBDIR = "merged"
+# Stable symlink to the merged model of the most recent full (non-lite) run. The
+# test and evaluate scripts load from here by default.
+LATEST_MODEL_LINK = OUTPUT_DIR / "text2sql_qlora"
 
 # Run identity, shared between the Hub repo name and the W&B run
 PROJECT_NAME = "gemma-text-to-sql"
@@ -262,6 +266,23 @@ def build_collate_fn(processor, max_length: int):
         batch["labels"] = labels
         return batch
     return collate_fn
+
+
+def update_latest_link(link: Path, target: Path) -> None:
+    """Atomically point `link` at `target`, using a relative symlink so the
+    project directory can be moved.
+
+    A real directory at `link` (e.g. a merged model saved before runs got their
+    own merged dir) is never replaced: it may be the only copy of that model."""
+    if link.exists() and not link.is_symlink():
+        print(f"WARNING: {link} is a real directory, not a symlink; leaving it untouched. "
+              f"Move or delete it to let it track the latest run (latest merge is at {target}).")
+        return
+    tmp_link = link.with_name(link.name + ".tmp")
+    tmp_link.unlink(missing_ok=True)
+    tmp_link.symlink_to(os.path.relpath(target, link.parent), target_is_directory=True)
+    os.replace(tmp_link, link)
+    print(f"{link} -> {target}")
 
 
 def main() -> None:
@@ -445,13 +466,20 @@ def main() -> None:
     # Load Model base model
     model = AutoModelForMultimodalLM.from_pretrained(MODEL_ID, low_cpu_mem_usage=True)
 
-    # Merge LoRA and base model and save
+    # Merge LoRA and base model and save next to the adapter it came from
+    merged_model_dir = Path(args.output_dir) / MERGED_SUBDIR
     peft_model = PeftModel.from_pretrained(model, args.output_dir)
     merged_model = peft_model.merge_and_unload()
-    merged_model.save_pretrained(MERGED_MODEL_DIR, safe_serialization=True, max_shard_size="2GB")
+    merged_model.save_pretrained(merged_model_dir, safe_serialization=True, max_shard_size="2GB")
 
     processor = AutoProcessor.from_pretrained("google/gemma-4-E2B-it")
-    processor.save_pretrained(MERGED_MODEL_DIR)
+    processor.save_pretrained(merged_model_dir)
+    print(f"Merged model saved to {merged_model_dir}")
+
+    # Smoke-test (lite) runs keep their merged model but never become "latest",
+    # so they can't shadow the model from the last full run.
+    if not LITE_MODE:
+        update_latest_link(LATEST_MODEL_LINK, merged_model_dir)
 
 
 if __name__ == "__main__":
