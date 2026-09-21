@@ -14,6 +14,7 @@ Usage:
     python finetune_qlora_evaluate.py
     python finetune_qlora_evaluate.py --limit 50
     python finetune_qlora_evaluate.py --output results.json
+    python finetune_qlora_evaluate.py --model out/<run dir>/merged
 """
 import argparse
 import json
@@ -30,7 +31,8 @@ from spider_prompts import build_prompt_messages, load_tables
 DATA_DIR = Path(__file__).parent / "spider_data"
 TEST_DB_DIR = DATA_DIR / "test_database"
 TEST_TABLES_JSON = DATA_DIR / "test_tables.json"
-MODEL_ID = str(Path(__file__).parent / "out" / "text2sql_qlora")
+# Default model: symlink to the merged model of the latest full training run.
+DEFAULT_MODEL = Path(__file__).parent / "out" / "text2sql_qlora"
 
 GREEN = "\033[92m"
 YELLOW = "\033[93m"
@@ -79,20 +81,21 @@ def run_query(db_id: str, sql: str, db_dir: Path = TEST_DB_DIR) -> tuple[bool, s
         return False, set()
 
 
-def load_pipeline():
+def load_pipeline(model_path: Path):
     """Load the merged model, processor, and generation config into a text-generation pipeline."""
-    model = AutoModelForMultimodalLM.from_pretrained(MODEL_ID, device_map="auto", dtype="auto")
-    processor = AutoProcessor.from_pretrained(MODEL_ID)
+    model_id = str(model_path)
+    model = AutoModelForMultimodalLM.from_pretrained(model_id, device_map="auto", dtype="auto")
+    processor = AutoProcessor.from_pretrained(model_id)
 
-    config = GenerationConfig.from_pretrained(MODEL_ID)
-    config.max_new_tokens = 256
+    config = GenerationConfig.from_pretrained(model_id)
+    config.max_new_tokens = 1024
     config.eos_token_id = [processor.tokenizer.convert_tokens_to_ids("<turn|>")]
 
     pipe = pipeline("text-generation", model=model, tokenizer=processor.tokenizer)
     return pipe, processor.tokenizer, config
 
 
-def evaluate(limit: int | None = None, batch_size: int = 8) -> list[dict[str, Any]]:
+def evaluate(model_path: Path = DEFAULT_MODEL, limit: int | None = None, batch_size: int = 8) -> list[dict[str, Any]]:
     """Generate and score a SQL prediction for each test example.
 
     Prompts are fed to the pipeline as a single generator (with `batch_size`)
@@ -105,7 +108,8 @@ def evaluate(limit: int | None = None, batch_size: int = 8) -> list[dict[str, An
         samples = samples[:limit]
     tables = load_tables(TEST_TABLES_JSON)
 
-    pipe, tokenizer, config = load_pipeline()
+    print(f"Evaluating model: {model_path.resolve()}")
+    pipe, tokenizer, config = load_pipeline(model_path)
 
     prompts = [build_prompt(sample, tokenizer, tables) for sample in samples]
     outputs_iter = pipe((p for p in prompts), generation_config=config, batch_size=batch_size)
@@ -166,12 +170,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Evaluate the fine-tuned text-to-SQL model on the Spider test set."
     )
+    parser.add_argument("--model", type=Path, default=DEFAULT_MODEL,
+                        help="Merged model directory to evaluate (default: out/text2sql_qlora, the latest full run).")
     parser.add_argument("--limit", type=int, default=None, help="Only evaluate the first N test examples.")
     parser.add_argument("--batch-size", type=int, default=8, help="Generation batch size.")
     parser.add_argument("--output", type=Path, default=None, help="Optional path to save detailed results as JSON.")
     args = parser.parse_args()
 
-    results = evaluate(limit=args.limit, batch_size=args.batch_size)
+    results = evaluate(model_path=args.model, limit=args.limit, batch_size=args.batch_size)
     display_results(results)
 
     if args.output:
