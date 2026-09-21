@@ -6,12 +6,13 @@ Note: Evaluating generative AI models is not a trivial task since one input can 
 """
 from pathlib import Path
 from typing import Any
-from transformers import AutoModelForMultimodalLM, AutoProcessor
+from transformers import AutoModelForCausalLM, AutoTokenizer
 from random import randint
 from transformers import pipeline, GenerationConfig, pipeline
 import json
 
-from spider_prompts import build_prompt_messages, load_tables, schema_to_text
+from spider_prompts import (CHAT_TEMPLATE_KWARGS, END_OF_TURN, build_prompt_messages, configure_tokenizer,
+                            load_tables, schema_to_text)
 
 DATA_DIR = Path(__file__).parent / "spider_data"
 TEST_TABLES_JSON = DATA_DIR / "test_tables.json"
@@ -31,38 +32,43 @@ def load_test_dataset(data_dir: Path = DATA_DIR) -> list[dict[str, Any]]:
 test_samples = load_test_dataset()
 test_tables = load_tables(TEST_TABLES_JSON)
 
-model_id = str(Path(__file__).parent / "out" / "text2sql_qlora")
+# Symlink to the merged model of the latest full training run (see finetune_qlora.py)
+model_id = str(Path(__file__).parent / "out" / "text2sql_qlora_llama")
 
 # Load Model with PEFT adapter
-model = AutoModelForMultimodalLM.from_pretrained(
+model = AutoModelForCausalLM.from_pretrained(
   model_id,
   device_map="auto",
   dtype="auto",
 )
-processor = AutoProcessor.from_pretrained(model_id)
+tokenizer = configure_tokenizer(AutoTokenizer.from_pretrained(model_id), padding_side="left")
 
 """Let's load a random sample from the test dataset and generate a SQL command."""
 
 config = GenerationConfig.from_pretrained(model_id)
 config.max_new_tokens = 256
-config.eos_token_id = [processor.tokenizer.convert_tokens_to_ids("<turn|>")]
+config.do_sample = False
+config.eos_token_id = [tokenizer.convert_tokens_to_ids(END_OF_TURN)]
+config.pad_token_id = tokenizer.pad_token_id
 
 # Load the model and tokenizer into the pipeline
-pipe = pipeline("text-generation", model=model, tokenizer=processor.tokenizer)
+pipe = pipeline("text-generation", model=model, tokenizer=tokenizer)
 
 # Load a random sample from the test dataset
 test_sample = test_samples[randint(0, len(test_samples) - 1)]
 
-# Convert the test example into the prompt the model was trained on, rendered with the Gemma template
+# Convert the test example into the prompt the model was trained on, rendered with the Llama chat template
 messages = build_prompt_messages(test_sample["question"], test_sample["db_id"], test_tables)
-prompt = processor.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+prompt = tokenizer.apply_chat_template(
+    messages, tokenize=False, add_generation_prompt=True, **CHAT_TEMPLATE_KWARGS
+)
 print(prompt)
 
 # Generate our SQL query.
-outputs = pipe(text_inputs=prompt, generation_config=config)
+outputs = pipe(text_inputs=prompt, generation_config=config, return_full_text=False)
 
 print(f"DB ID: ", test_sample["db_id"])
 print(f"Schema:\n", schema_to_text(test_tables[test_sample["db_id"]]))
 print(f"Question:\n", test_sample["question"])
 print(f"Original Answer:\n{test_sample['query']}")
-print(f"Generated Answer:\n{outputs[0]['generated_text'][len(prompt):].split('<turn|>')[0].strip()}")
+print(f"Generated Answer:\n{outputs[0]['generated_text'].split(END_OF_TURN)[0].strip()}")

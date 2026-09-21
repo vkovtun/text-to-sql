@@ -29,9 +29,11 @@ from datasets import Dataset, DatasetDict
 
 import torch
 import wandb
-from transformers import AutoProcessor, AutoModelForMultimodalLM, BitsAndBytesConfig
+from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 from peft import prepare_model_for_kbit_training, LoraConfig, PeftModel
 from trl import SFTConfig, SFTTrainer
+
+from spider_prompts import CHAT_TEMPLATE_KWARGS, configure_tokenizer
 
 # Login into Hugging Face Hub
 from huggingface_hub import login
@@ -52,14 +54,23 @@ OUTPUT_DIR = Path(__file__).parent / "out"
 MERGED_SUBDIR = "merged"
 # Stable symlink to the merged model of the most recent full (non-lite) run. The
 # test and evaluate scripts load from here by default.
-LATEST_MODEL_LINK = OUTPUT_DIR / "text2sql_qlora"
+LATEST_MODEL_LINK = OUTPUT_DIR / "text2sql_qlora_llama"
 
 # Run identity, shared between the Hub repo name and the W&B run
-PROJECT_NAME = "gemma-text-to-sql"
+PROJECT_NAME = "llama-text-to-sql"
 
-# Hugging Face model id
-MODEL_ID = "google/gemma-4-E2B" # @param ["google/gemma-4-E2B","google/gemma-4-E4B","google/gemma-4-12B","google/gemma-4-31B","google/gemma-4-26B-A4B"] {"allow-input":true}
-PROCESSOR_MODEL_ID = "google/gemma-4-E2B-it"
+# Hugging Face model id. The Instruct model provides both the weights and the tokenizer /
+# official chat template (the Llama 3 base models have untrained embeddings for the chat
+# special tokens, so the Instruct variants are the ones to fine-tune with a chat template).
+# Other models to try (all gated: accept the license on the model page and use an HF_TOKEN
+# with access). The VRAM figures are rough, for 4-bit QLoRA with a small per-device batch
+# (lower BATCH_SIZE and raise GRADIENT_ACCUMULATION_STEPS to fit); the merge step at the end
+# also needs about the bf16 model size in CPU RAM.
+#   "meta-llama/Llama-3.2-1B-Instruct"   ~1B  smaller/faster, fits a 16GB GPU easily
+#   "meta-llama/Llama-3.2-3B-Instruct"   ~3B  fits a 16GB GPU (current choice)
+#   "meta-llama/Llama-3.1-8B-Instruct"   ~8B  ~24GB GPU, ~16GB CPU RAM to merge
+#   "meta-llama/Llama-3.3-70B-Instruct"  ~70B ~80GB GPU (or several smaller ones), ~140GB CPU RAM to merge
+MODEL_ID = "meta-llama/Llama-3.2-3B-Instruct"
 
 # Quick local smoke-test switch: trims the dataset and lightens hyperparameters so the
 # whole pipeline can be exercised in a few minutes on a single 16GB GPU. Set to False for a full training run.
@@ -67,23 +78,37 @@ LITE_MODE = False
 
 LITE_TRAIN_SAMPLES = 500
 LITE_EVAL_SAMPLES = 125
-LITE_MAX_LENGTH = 512
-LITE_NUM_EPOCHS = 1
-LITE_LOGGING_STEPS = 1
-LITE_CHECKPOINT_EVAL_STEPS = 100
-LITE_GRAD_ACCUM_STEPS = 1
 
-FULL_MAX_LENGTH = 1024
-FULL_NUM_EPOCHS = 3
-FULL_LOGGING_STEPS = 10
-# Steps are optimizer steps, i.e. one per FULL_GRAD_ACCUM_STEPS samples (~430 per epoch),
-# so 30 steps keeps the eval spacing at ~500 samples, same as before accumulation.
-FULL_CHECKPOINT_EVAL_STEPS = 30
-# Effective batch size = per_device_train_batch_size (1, sized for a 16GB GPU) x this.
-FULL_GRAD_ACCUM_STEPS = 16
+# Logging / evaluation cadence. Steps are optimizer steps, i.e. one per
+# BATCH_SIZE x GRADIENT_ACCUMULATION_STEPS samples.
+LOGGING_STEPS = 1 if LITE_MODE else 10
+CHECKPOINT_EVAL_STEPS = 100 if LITE_MODE else 30
 
-# Linear LR warmup, as a fraction of total optimizer steps, followed by cosine decay.
-WARMUP_RATIO = 0.05
+# Hyper-parameters - overall
+
+EPOCHS = 1 if LITE_MODE else 3
+BATCH_SIZE = 32 if LITE_MODE else 256  # per device; effective batch = BATCH_SIZE x GRADIENT_ACCUMULATION_STEPS
+MAX_SEQUENCE_LENGTH = 128  # examples longer than this many tokens are dropped from the dataset
+GRADIENT_ACCUMULATION_STEPS = 1
+
+# Hyper-parameters - QLoRA
+
+QUANT_4_BIT = True  # False loads the model unquantized (plain LoRA)
+LORA_R = 32 if LITE_MODE else 256
+LORA_ALPHA = LORA_R * 2
+ATTENTION_LAYERS = ["q_proj", "v_proj", "k_proj", "o_proj"]
+MLP_LAYERS = ["gate_proj", "up_proj", "down_proj"]
+TARGET_MODULES = ATTENTION_LAYERS if LITE_MODE else ATTENTION_LAYERS + MLP_LAYERS
+LORA_DROPOUT = 0.1
+
+# Hyper-parameters - training
+
+LEARNING_RATE = 1e-4
+WARMUP_RATIO = 0.01  # linear LR warmup, as a fraction of total optimizer steps, followed by the scheduler below
+LR_SCHEDULER_TYPE = 'cosine'
+WEIGHT_DECAY = 0.001
+OPTIMIZER = "paged_adamw_32bit"
+SAVE_STRATEGY = "no" if LITE_MODE else "best"
 
 """## Load the fine-tuning dataset
 
@@ -153,19 +178,20 @@ def conversation(example: dict[str, Any]) -> list[dict[str, str]]:
     return example["prompt"] + example["completion"]
 
 
-def build_token_length_fn(processor):
+def build_token_length_fn(tokenizer):
     """Return a function that measures the chat-templated token length of an
     example, for filtering out examples that won't fit max_length."""
     def token_length(example: dict[str, Any]) -> int:
-        full_text = processor.apply_chat_template(
-            conversation(example), add_generation_prompt=False, tokenize=False
+        full_text = tokenizer.apply_chat_template(
+            conversation(example), add_generation_prompt=False, tokenize=False, **CHAT_TEMPLATE_KWARGS
         ).strip()
-        return len(processor(text=[full_text])["input_ids"][0])
+        # add_special_tokens=False: the chat template already writes <|begin_of_text|>
+        return len(tokenizer(text=full_text, add_special_tokens=False)["input_ids"])
     return token_length
 
 
-def build_collate_fn(processor, max_length: int):
-    """Return a data collator bound to the given processor and max_length.
+def build_collate_fn(tokenizer, max_length: int):
+    """Return a data collator bound to the given tokenizer and max_length.
 
     Because the dataset keeps the prompt and the completion apart, the loss mask
     is derived from the exact tokenised length of the chat-templated prompt
@@ -177,33 +203,35 @@ def build_collate_fn(processor, max_length: int):
         prompt_texts = []
 
         for example in examples:
-            full_text = processor.apply_chat_template(
-                conversation(example), add_generation_prompt=False, tokenize=False
+            full_text = tokenizer.apply_chat_template(
+                conversation(example), add_generation_prompt=False, tokenize=False, **CHAT_TEMPLATE_KWARGS
             )
             texts.append(full_text.strip())
-            # No .strip() here: the generation prompt's trailing newline is part
+            # No .strip() here: the generation prompt's trailing newlines are part
             # of the prefix that must be masked out.
             prompt_texts.append(
-                processor.apply_chat_template(
-                    example["prompt"], add_generation_prompt=True, tokenize=False
+                tokenizer.apply_chat_template(
+                    example["prompt"], add_generation_prompt=True, tokenize=False, **CHAT_TEMPLATE_KWARGS
                 )
             )
 
-        # Tokenize the texts and process the audios
-        batch = processor(
+        # Tokenize the texts. add_special_tokens=False because the chat template
+        # already writes <|begin_of_text|>; the tokenizer would add a second one.
+        batch = tokenizer(
             text=texts,
             return_tensors="pt",
             padding=True,
             truncation=True,
             max_length=max_length,
+            add_special_tokens=False,
         )
 
-        # Tokenized prompts, purely to measure the prefix to mask. padding=False is
-        # required: the Gemma processor pads by default, which would prepend pad
-        # tokens to every prompt and break the prefix comparison below.
-        prompt_ids = processor(text=prompt_texts, padding=False)["input_ids"]
+        # Tokenized prompts, purely to measure the prefix to mask. Must be tokenized
+        # exactly like the texts above (no padding, no extra special tokens) or the
+        # prefix comparison below breaks.
+        prompt_ids = tokenizer(text=prompt_texts, padding=False, add_special_tokens=False)["input_ids"]
 
-        # The labels are the input_ids, and we mask the padding tokens and audio tokens in the loss computation
+        # The labels are the input_ids; the prompt and the padding are masked out of the loss
         labels = batch["input_ids"].clone()
 
         for i in range(labels.size(0)):
@@ -211,7 +239,7 @@ def build_collate_fn(processor, max_length: int):
             attention_mask = batch["attention_mask"][i].tolist()
 
             # First non-padding position, so the mask is correct whether the
-            # processor pads on the left or on the right
+            # tokenizer pads on the left or on the right
             row_start = attention_mask.index(1)
             row_end = row_start + sum(attention_mask)
             prompt_end = min(row_start + len(prompt_ids[i]), row_end)
@@ -227,8 +255,9 @@ def build_collate_fn(processor, max_length: int):
             # Keep loss on the assistant answer only
             labels[i, :prompt_end] = -100
 
-        # Mask tokens for not being used in the loss computation
-        labels[labels == processor.tokenizer.pad_token_id] = -100
+        # Mask padding. The pad token differs from <|eot_id|> (see configure_tokenizer),
+        # so the end of the answer stays in the loss.
+        labels[labels == tokenizer.pad_token_id] = -100
 
         batch["labels"] = labels
         return batch
@@ -287,9 +316,9 @@ def main() -> None:
     for message in conversation(dataset["train"][0]):
         print(message)
 
-    """## Fine-tune Gemma using TRL and the SFTTrainer
+    """## Fine-tune Llama using TRL and the SFTTrainer
 
-    The following code loads the Gemma model and tokenizer from Hugging Face and initializes the quantization configuration.
+    The following code loads the Llama model and tokenizer from Hugging Face and initializes the quantization configuration.
     """
 
     # Check if GPU supports bfloat16
@@ -305,58 +334,69 @@ def main() -> None:
     )
 
     # BitsAndBytesConfig: Enables 4-bit quantization to reduce model size/memory usage
-    model_kwargs["quantization_config"] = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_use_double_quant=True,
-        bnb_4bit_quant_type='nf4',
-        bnb_4bit_compute_dtype=torch_dtype,
-        bnb_4bit_quant_storage=torch_dtype,
-    )
+    if QUANT_4_BIT:
+        quant_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_quant_type='nf4',
+            bnb_4bit_compute_dtype=torch_dtype,
+            bnb_4bit_quant_storage=torch_dtype,
+        )
+    else:
+        quant_config = BitsAndBytesConfig(
+            load_in_8bit=True,
+            bnb_8bit_compute_dtype=torch_dtype,
+        )
 
-    # Load model and processor
-    model = AutoModelForMultimodalLM.from_pretrained(MODEL_ID, **model_kwargs)
-    processor = AutoProcessor.from_pretrained(PROCESSOR_MODEL_ID) # Load the Instruction Processor to use the official Gemma template
+    model_kwargs["quantization_config"] = quant_config
+
+    # Load model and tokenizer (the Instruct repo carries the official Llama chat template).
+    # Right padding for training; the tokenizer is saved next to the merged model.
+    model = AutoModelForCausalLM.from_pretrained(MODEL_ID, **model_kwargs)
+    tokenizer = configure_tokenizer(AutoTokenizer.from_pretrained(MODEL_ID), padding_side="right")
 
     # NOTE: You should call the prepare_model_for_kbit_training() function to preprocess the quantized model for training.
     # On T4, we are skipping this step purely due to VRAM limitation and for a quick demonstration.
-    if (torch.cuda.get_device_properties(0).total_memory/1024**3) > 16:
+    if QUANT_4_BIT and (torch.cuda.get_device_properties(0).total_memory/1024**3) > 16:
         model = prepare_model_for_kbit_training(model)
 
     """The `SFTTrainer` supports a built-in integration with `peft`, which makes it straightforward to efficiently tune LLMs using QLoRA. You only need to create a `LoraConfig` and provide it to the trainer."""
 
-    peft_config = LoraConfig(
-        lora_alpha=32,
-        lora_dropout=0.1,
-        r=16,
+    lora_config = LoraConfig(
+        lora_alpha=LORA_ALPHA,
+        lora_dropout=LORA_DROPOUT,
+        r=LORA_R,
         bias="none",
-        # no target_modules — PEFT's Gemma 4 defaults scope to the LM layers
         task_type="CAUSAL_LM",
-        ensure_weight_tying=True,
+        target_modules=TARGET_MODULES,
     )
 
     """Before you can start your training, you need to define the hyperparameter you want to use in a `SFTConfig` instance."""
 
-    args = SFTConfig(
+    train_parameters = SFTConfig(
         output_dir=str(OUTPUT_DIR / project_run_name), # directory to save; its basename is the Hub repo name
-        max_length=LITE_MAX_LENGTH if LITE_MODE else FULL_MAX_LENGTH,       # max length for model and packing of the dataset
-        num_train_epochs=LITE_NUM_EPOCHS if LITE_MODE else FULL_NUM_EPOCHS, # number of training epochs
-        per_device_train_batch_size=1,          # batch size per device during training
-        gradient_accumulation_steps=LITE_GRAD_ACCUM_STEPS if LITE_MODE else FULL_GRAD_ACCUM_STEPS, # effective batch = 1 x this
+        num_train_epochs=EPOCHS,                # number of training epochs
+        per_device_train_batch_size=BATCH_SIZE, # batch size per device during training
+        gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS, # effective batch = BATCH_SIZE x this
         per_device_eval_batch_size=1,           # batch size per device during evaluation
-        optim="adamw_torch_fused",              # use fused adamw optimizer
-        #  optim="paged_adamw_8bit",
-        logging_steps=LITE_LOGGING_STEPS if LITE_MODE else FULL_LOGGING_STEPS, # log every N steps
-        save_strategy="no" if LITE_MODE else "best", # "best": save only when eval_loss improves; lite mode skips checkpoints
+        optim=OPTIMIZER,                        # optimizer
+        weight_decay=WEIGHT_DECAY,              # weight decay
+        logging_steps=LOGGING_STEPS,            # log every N steps
+        save_strategy=SAVE_STRATEGY,            # "best": save only when eval_loss improves; lite mode skips checkpoints
         eval_strategy="steps",                  # evaluate checkpoint every eval_steps steps
-        eval_steps=LITE_CHECKPOINT_EVAL_STEPS if LITE_MODE else FULL_CHECKPOINT_EVAL_STEPS,
-        learning_rate=5e-5,                     # learning rate
+        eval_steps=CHECKPOINT_EVAL_STEPS,
+        learning_rate=LEARNING_RATE,            # learning rate
         fp16=True if torch_dtype == torch.float16 else False,  # use float16 precision
         bf16=True if torch_dtype == torch.bfloat16 else False, # use bfloat16 precision
-        lr_scheduler_type="cosine",             # decay the LR to 0 so training can settle
+        max_grad_norm=0.3,
+        max_steps=-1,
         warmup_steps=WARMUP_RATIO,              # a float < 1 is a fraction of total optimizer steps
+        group_by_length=True,
+        lr_scheduler_type=LR_SCHEDULER_TYPE,    # LR schedule after warmup
         push_to_hub=not LITE_MODE,              # don't push smoke-test runs to the hub
-        report_to=["wandb", "tensorboard"],     # report metrics to W&B and tensorboard
+        report_to="wandb",                      # report metrics to W&B
         run_name=run_name,                      # W&B run name
+        max_length=MAX_SEQUENCE_LENGTH,         # max length for model and packing of the dataset
         dataset_kwargs={"skip_prepare_dataset": True}, # important for collator
         remove_unused_columns = False,                 # important for collator
         load_best_model_at_end=not LITE_MODE,   # restore the lowest-eval-loss adapter before the final save/merge
@@ -366,7 +406,7 @@ def main() -> None:
         # No assistant_only_loss / dataset_text_field: response-only loss is built by
         # build_collate_fn (skip_prepare_dataset bypasses TRL's own masking), and
         # assistant_only_loss=True makes SFTTrainer demand a `{% generation %}` chat
-        # template, which Gemma 4's does not have.
+        # template, which stock chat templates (Llama 3's included) do not have.
     )
 
     """Now that the DB schema is embedded in each prompt, some examples (schema-heavy DBs
@@ -375,35 +415,35 @@ def main() -> None:
     would compute loss on truncated prompt text instead of the SQL target), drop them from
     the dataset up front."""
 
-    token_length = build_token_length_fn(processor)
+    token_length = build_token_length_fn(tokenizer)
 
     lite_split_caps = {"train": LITE_TRAIN_SAMPLES, "validation": LITE_EVAL_SAMPLES}
 
     for split in dataset:
         before = len(dataset[split])
         dataset[split] = dataset[split].filter(
-            lambda example: token_length(example) <= args.max_length
+            lambda example: token_length(example) <= train_parameters.max_length
         )
         dropped = before - len(dataset[split])
-        print(f"{split}: dropped {dropped}/{before} examples exceeding max_length={args.max_length} tokens")
+        print(f"{split}: dropped {dropped}/{before} examples exceeding max_length={train_parameters.max_length} tokens")
 
         if LITE_MODE:
             cap = lite_split_caps[split]
             dataset[split] = dataset[split].select(range(min(cap, len(dataset[split]))))
             print(f"LITE_MODE: trimmed {split} to {len(dataset[split])} examples (post-filter)")
 
-    collate_fn = build_collate_fn(processor, args.max_length)
+    collate_fn = build_collate_fn(tokenizer, train_parameters.max_length)
 
     """You now have every building block you need to create your `SFTTrainer` to start the training of your model."""
 
     # Create Trainer object
     trainer = SFTTrainer(
         model=model,
-        args=args,
         train_dataset=dataset["train"],
         eval_dataset=dataset["validation"],
-        peft_config=peft_config,
-        processing_class=processor,
+        peft_config=lora_config,
+        args=train_parameters,
+        processing_class=tokenizer,
         data_collator=collate_fn,
     )
 
@@ -431,15 +471,16 @@ def main() -> None:
     """
 
     # Load Model base model
-    model = AutoModelForMultimodalLM.from_pretrained(MODEL_ID, low_cpu_mem_usage=True)
+    model = AutoModelForCausalLM.from_pretrained(MODEL_ID, low_cpu_mem_usage=True)
 
     # Merge LoRA and base model and save next to the adapter it came from
-    merged_model_dir = Path(args.output_dir) / MERGED_SUBDIR
-    peft_model = PeftModel.from_pretrained(model, args.output_dir)
+    merged_model_dir = Path(train_parameters.output_dir) / MERGED_SUBDIR
+    peft_model = PeftModel.from_pretrained(model, train_parameters.output_dir)
     merged_model = peft_model.merge_and_unload()
     merged_model.save_pretrained(merged_model_dir, safe_serialization=True, max_shard_size="2GB")
 
-    processor.save_pretrained(merged_model_dir)
+    # Reuse the tokenizer from training (SFTTrainer leaves it unchanged with this config)
+    tokenizer.save_pretrained(merged_model_dir)
     print(f"Merged model saved to {merged_model_dir}")
 
     # Smoke-test (lite) runs keep their merged model but never become "latest",

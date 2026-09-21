@@ -23,9 +23,9 @@ from pathlib import Path
 from typing import Any
 
 from tqdm.auto import tqdm
-from transformers import AutoModelForMultimodalLM, AutoProcessor, GenerationConfig, pipeline
+from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig, pipeline
 
-from spider_prompts import build_prompt_messages, load_tables
+from spider_prompts import CHAT_TEMPLATE_KWARGS, END_OF_TURN, build_prompt_messages, configure_tokenizer, load_tables
 
 # --------------------
 # Paths / config
@@ -46,8 +46,6 @@ MAX_NEW_TOKENS = 256
 BATCH_SIZE = 8
 # Flush the predictions file to disk every N examples so a crash loses little work.
 FLUSH_EVERY = 100
-# Gemma's end-of-turn marker, which ends the generated answer.
-END_OF_TURN = "<turn|>"
 
 
 def default_output_path(split: str) -> Path:
@@ -55,18 +53,20 @@ def default_output_path(split: str) -> Path:
 
 
 def load_pipeline(model_path: Path):
-    """Load the merged model, processor, and generation config into a text-generation pipeline."""
+    """Load the merged model, tokenizer, and generation config into a text-generation pipeline."""
     model_id = str(model_path)
-    model = AutoModelForMultimodalLM.from_pretrained(model_id, device_map="auto", dtype="auto")
-    processor = AutoProcessor.from_pretrained(model_id)
+    model = AutoModelForCausalLM.from_pretrained(model_id, device_map="auto", dtype="auto")
+    # Left padding, so batched generation continues right after each prompt
+    tokenizer = configure_tokenizer(AutoTokenizer.from_pretrained(model_id), padding_side="left")
 
     config = GenerationConfig.from_pretrained(model_id)
     config.max_new_tokens = MAX_NEW_TOKENS
     config.do_sample = False
-    config.eos_token_id = [processor.tokenizer.convert_tokens_to_ids(END_OF_TURN)]
+    config.eos_token_id = [tokenizer.convert_tokens_to_ids(END_OF_TURN)]
+    config.pad_token_id = tokenizer.pad_token_id
 
-    pipe = pipeline("text-generation", model=model, tokenizer=processor.tokenizer)
-    return pipe, processor.tokenizer, config
+    pipe = pipeline("text-generation", model=model, tokenizer=tokenizer)
+    return pipe, tokenizer, config
 
 
 def build_prompt(sample: dict[str, Any], tokenizer, tables: dict[str, dict[str, Any]]) -> str:
@@ -74,18 +74,21 @@ def build_prompt(sample: dict[str, Any], tokenizer, tables: dict[str, dict[str, 
     (see spider_prompts.py, which includes the DB schema), ending with the
     generation prompt for the model turn."""
     messages = build_prompt_messages(sample["question"], sample["db_id"], tables)
-    return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    return tokenizer.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True, **CHAT_TEMPLATE_KWARGS
+    )
 
 
-def extract_sql(generated_text: str, prompt: str) -> str:
+def extract_sql(generated_text: str) -> str:
     """Turn a pipeline's generated text into a single-line SQL query.
 
-    The pipeline echoes the prompt, and batched generation right-pads shorter
-    sequences with <pad> tokens after the end-of-turn marker, so anything after
-    the marker is discarded rather than just stripped as a suffix. The query is
-    collapsed onto one line (and stripped of a trailing semicolon) because the
-    Spider evaluation script reads one query per line."""
-    answer = generated_text[len(prompt):].split(END_OF_TURN)[0]
+    The pipeline is called with return_full_text=False, so this is only the new
+    tokens; generation stops at the end-of-turn token, and the special tokens
+    (end of turn, padding) are dropped when decoding. Splitting on the marker is
+    a safeguard in case it is ever kept. The query is collapsed onto one line
+    (and stripped of a trailing semicolon) because the Spider evaluation script
+    reads one query per line."""
+    answer = generated_text.split(END_OF_TURN)[0]
     return " ".join(answer.split()).rstrip(";").strip()
 
 
@@ -118,14 +121,14 @@ def main() -> None:
     # Prompts are fed to the pipeline as one generator (with batch_size) so
     # generation is batched on the GPU instead of running example by example.
     prompts = [build_prompt(sample, tokenizer, tables) for sample in samples]
-    outputs_iter = pipe((p for p in prompts), generation_config=config, batch_size=args.batch_size)
+    outputs_iter = pipe(
+        (p for p in prompts), generation_config=config, batch_size=args.batch_size, return_full_text=False
+    )
 
     with output_path.open("w", encoding="utf-8") as f:
-        for count, (prompt, outputs) in enumerate(
-            tqdm(zip(prompts, outputs_iter), total=len(prompts), desc="Generating"), start=1
-        ):
+        for count, outputs in enumerate(tqdm(outputs_iter, total=len(prompts), desc="Generating"), start=1):
             # Always write a line, even an empty one, to keep predictions aligned with the gold file.
-            f.write(extract_sql(outputs[0]["generated_text"], prompt) + "\n")
+            f.write(extract_sql(outputs[0]["generated_text"]) + "\n")
             if count % FLUSH_EVERY == 0:
                 f.flush()
                 os.fsync(f.fileno())

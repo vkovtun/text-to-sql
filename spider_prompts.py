@@ -2,7 +2,7 @@
 
 The model is trained on the prompts that spider_sft_data_prep.ipynb writes into
 spider_data_jsonl/*.jsonl, so inference must reproduce them exactly. This module
-holds that logic for finetune_qlora_test.py and finetune_qlora_evaluate.py. If the
+holds that logic for finetune_qlora.py, finetune_qlora_test.py and finetune_qlora_evaluate.py. If the
 prompt is changed in the notebook, change it here too; the two are checked against
 each other by comparing the output with the generated JSONL files.
 """
@@ -10,12 +10,35 @@ import json
 from pathlib import Path
 from typing import Any
 
+# Llama 3 chat-format details shared by training and inference; they must match.
+END_OF_TURN = "<|eot_id|>"  # closes every turn, so it is also the answer's final label
+PAD_TOKEN = "<|finetune_right_pad_id|>"  # Llama tokenizers ship without a pad token
+# The Llama 3.x chat template writes a "Today Date" line into the system header (3.2
+# defaults it to the current date). A fixed value keeps prompts identical across days.
+CHAT_TEMPLATE_KWARGS = {"date_string": "26 Jul 2024"}
+
 SYSTEM_PROMPT = (
     "You are a text-to-SQL system.\n"
     "Use ONLY tables/columns from the schema.\n"
     "Return exactly ONE SQLite SQL query and nothing else.\n"
     "Do NOT include explanations, comments, code fences, or the database id."
 )
+
+
+def configure_tokenizer(tokenizer, padding_side: str):
+    """Give a Llama tokenizer a dedicated pad token and the requested padding side.
+
+    The pad token must not be the end-of-turn token (the usual `pad = eos`
+    shortcut): training masks pad positions out of the loss, which would also mask
+    the `<|eot_id|>` the model has to learn to emit after the SQL."""
+    if tokenizer.pad_token is None:
+        if PAD_TOKEN not in tokenizer.get_vocab():
+            raise ValueError(f"{PAD_TOKEN} is not in the tokenizer vocabulary; pick another unused pad token")
+        tokenizer.pad_token = PAD_TOKEN
+    if tokenizer.pad_token_id == tokenizer.convert_tokens_to_ids(END_OF_TURN):
+        raise ValueError(f"pad token must differ from {END_OF_TURN}, or the end of every answer is masked from the loss")
+    tokenizer.padding_side = padding_side
+    return tokenizer
 
 
 def load_tables(path: Path) -> dict[str, dict[str, Any]]:
