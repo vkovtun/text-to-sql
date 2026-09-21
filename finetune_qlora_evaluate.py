@@ -1,25 +1,24 @@
-"""## Full Evaluation of the Fine-Tuned Model
+"""## Generate Spider predictions with the fine-tuned model
 
-Runs the fine-tuned model over the Spider test set and scores its generated SQL
-two ways:
+Runs the merged fine-tuned model over a Spider split and writes one predicted SQL
+query per line, in dataset order. That is the format the official Spider
+evaluation script expects, and that script produces the exact-match and
+execution-accuracy scores:
 
-- Exact match: the generated SQL equals the gold SQL after normalizing
-  whitespace and case.
-- Execution accuracy: the generated SQL and the gold SQL are run against the
-  example's sqlite database and their result sets are compared. This catches
-  queries that are syntactically different but semantically equivalent, and
-  is the more meaningful of the two metrics.
+    python finetune_qlora_evaluate.py
+    python evaluation.py --gold spider_data/test_gold.sql \\
+        --pred out/eval/pred_test_eval_qlora.sql \\
+        --db spider_data/test_database --table spider_data/test_tables.json --etype all
 
 Usage:
-    python finetune_qlora_evaluate.py
-    python finetune_qlora_evaluate.py --limit 50
-    python finetune_qlora_evaluate.py --output results.json
-    python finetune_qlora_evaluate.py --model out/<run dir>/merged
+    python finetune_qlora_evaluate.py                        # full test split
+    python finetune_qlora_evaluate.py --split dev
+    python finetune_qlora_evaluate.py --limit 20             # quick check
+    python finetune_qlora_evaluate.py --model out/<run dir>/merged --output out/eval/other.sql
 """
 import argparse
 import json
-import re
-import sqlite3
+import os
 from pathlib import Path
 from typing import Any
 
@@ -28,57 +27,31 @@ from transformers import AutoModelForMultimodalLM, AutoProcessor, GenerationConf
 
 from spider_prompts import build_prompt_messages, load_tables
 
+# --------------------
+# Paths / config
+# --------------------
 DATA_DIR = Path(__file__).parent / "spider_data"
-TEST_DB_DIR = DATA_DIR / "test_database"
-TEST_TABLES_JSON = DATA_DIR / "test_tables.json"
-# Default model: symlink to the merged model of the latest full training run.
-DEFAULT_MODEL = Path(__file__).parent / "out" / "text2sql_qlora"
+# Per split: (examples, tables). The dev split shares tables.json with train.
+SPLIT_FILES = {
+    "dev": (DATA_DIR / "dev.json", DATA_DIR / "tables.json"),
+    "test": (DATA_DIR / "test.json", DATA_DIR / "test_tables.json"),
+}
+DEFAULT_SPLIT = "test"
 
-GREEN = "\033[92m"
-YELLOW = "\033[93m"
-RED = "\033[91m"
-RESET = "\033[0m"
+# Merged (base + adapter) model to run, and where the predictions go.
+DEFAULT_MODEL = Path(__file__).parent / "out" / "text2sql_qlora_euler"
+OUTPUT_DIR = Path(__file__).parent / "out" / "eval"
 
-def load_json(path: Path) -> list[dict[str, Any]]:
-    """Load a Spider-format JSON file into a list of example records."""
-    with path.open(encoding="utf-8") as f:
-        return json.load(f)
-
-
-def load_test_dataset(data_dir: Path = DATA_DIR) -> list[dict[str, Any]]:
-    """Load the test split."""
-    return load_json(data_dir / "test.json")
+MAX_NEW_TOKENS = 256
+BATCH_SIZE = 8
+# Flush the predictions file to disk every N examples so a crash loses little work.
+FLUSH_EVERY = 100
+# Gemma's end-of-turn marker, which ends the generated answer.
+END_OF_TURN = "<turn|>"
 
 
-def build_prompt(sample: dict[str, Any], tokenizer, tables: dict[str, dict[str, Any]]) -> str:
-    """Render a test sample into the chat-templated prompt the model was trained on
-    (see spider_prompts.py), ending with the generation prompt for the model turn."""
-    messages = build_prompt_messages(sample["question"], sample["db_id"], tables)
-    return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-
-
-def extract_sql(generated_text: str, prompt: str) -> str:
-    """Strip the echoed prompt off a pipeline's generated text, keeping only what
-    precedes the turn marker. Batched generation right-pads shorter sequences
-    with <pad> tokens after the turn marker, so anything after it is discarded
-    rather than just stripped as a suffix."""
-    generated = generated_text[len(prompt):]
-    return generated.split("<turn|>")[0].strip()
-
-
-def normalize_sql(sql: str) -> str:
-    return re.sub(r"\s+", " ", sql).strip().rstrip(";").lower()
-
-
-def run_query(db_id: str, sql: str, db_dir: Path = TEST_DB_DIR) -> tuple[bool, set]:
-    """Execute a SQL query and return (succeeded, result rows as a set of tuples)."""
-    db_path = db_dir / db_id / f"{db_id}.sqlite"
-    try:
-        with sqlite3.connect(db_path) as conn:
-            rows = conn.execute(sql).fetchall()
-        return True, set(rows)
-    except sqlite3.Error:
-        return False, set()
+def default_output_path(split: str) -> Path:
+    return OUTPUT_DIR / f"pred_{split}_qlora_eval.sql"
 
 
 def load_pipeline(model_path: Path):
@@ -88,101 +61,76 @@ def load_pipeline(model_path: Path):
     processor = AutoProcessor.from_pretrained(model_id)
 
     config = GenerationConfig.from_pretrained(model_id)
-    config.max_new_tokens = 1024
-    config.eos_token_id = [processor.tokenizer.convert_tokens_to_ids("<turn|>")]
+    config.max_new_tokens = MAX_NEW_TOKENS
+    config.do_sample = False
+    config.eos_token_id = [processor.tokenizer.convert_tokens_to_ids(END_OF_TURN)]
 
     pipe = pipeline("text-generation", model=model, tokenizer=processor.tokenizer)
     return pipe, processor.tokenizer, config
 
 
-def evaluate(model_path: Path = DEFAULT_MODEL, limit: int | None = None, batch_size: int = 8) -> list[dict[str, Any]]:
-    """Generate and score a SQL prediction for each test example.
-
-    Prompts are fed to the pipeline as a single generator (with `batch_size`)
-    instead of one call per example, so generation is actually batched on the
-    GPU rather than triggering transformers' "using the pipeline sequentially
-    on GPU" warning.
-    """
-    samples = load_test_dataset()
-    if limit:
-        samples = samples[:limit]
-    tables = load_tables(TEST_TABLES_JSON)
-
-    print(f"Evaluating model: {model_path.resolve()}")
-    pipe, tokenizer, config = load_pipeline(model_path)
-
-    prompts = [build_prompt(sample, tokenizer, tables) for sample in samples]
-    outputs_iter = pipe((p for p in prompts), generation_config=config, batch_size=batch_size)
-
-    results = []
-    for sample, prompt, outputs in tqdm(zip(samples, prompts, outputs_iter), total=len(samples), desc="Evaluating"):
-        predicted_sql = extract_sql(outputs[0]["generated_text"], prompt)
-
-        exact_match = normalize_sql(predicted_sql) == normalize_sql(sample["query"])
-
-        pred_ok, pred_rows = run_query(sample["db_id"], predicted_sql)
-        gold_ok, gold_rows = run_query(sample["db_id"], sample["query"])
-        execution_match = pred_ok and gold_ok and pred_rows == gold_rows
-
-        results.append({
-            "db_id": sample["db_id"],
-            "question": sample["question"],
-            "gold_sql": sample["query"],
-            "predicted_sql": predicted_sql,
-            "exact_match": exact_match,
-            "executable": pred_ok,
-            "execution_match": execution_match,
-        })
-
-    return results
+def build_prompt(sample: dict[str, Any], tokenizer, tables: dict[str, dict[str, Any]]) -> str:
+    """Render a sample into the chat-templated prompt the model was trained on
+    (see spider_prompts.py, which includes the DB schema), ending with the
+    generation prompt for the model turn."""
+    messages = build_prompt_messages(sample["question"], sample["db_id"], tables)
+    return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
 
 
-def display_results(results: list[dict[str, Any]]) -> None:
-    """Print a colored per-example breakdown followed by a summary of the metrics."""
-    total = len(results)
+def extract_sql(generated_text: str, prompt: str) -> str:
+    """Turn a pipeline's generated text into a single-line SQL query.
 
-    for r in results:
-        if r["execution_match"]:
-            color, status = GREEN, "MATCH"
-        elif r["executable"]:
-            color, status = YELLOW, "EXEC OK"
-        else:
-            color, status = RED, "SQL ERROR"
-
-        print(f"{color}[{status}]{RESET} {r['db_id']}: {r['question']}")
-        print(f"  gold:      {r['gold_sql']}")
-        print(f"  predicted: {r['predicted_sql']}")
-
-    exact_matches = sum(r["exact_match"] for r in results)
-    executable = sum(r["executable"] for r in results)
-    execution_matches = sum(r["execution_match"] for r in results)
-
-    print()
-    print("=" * 60)
-    print(f"Total examples:      {total}")
-    print(f"Exact match:         {exact_matches}/{total} ({exact_matches / total:.1%})")
-    print(f"Executable:          {executable}/{total} ({executable / total:.1%})")
-    print(f"Execution accuracy:  {execution_matches}/{total} ({execution_matches / total:.1%})")
-    print("=" * 60)
+    The pipeline echoes the prompt, and batched generation right-pads shorter
+    sequences with <pad> tokens after the end-of-turn marker, so anything after
+    the marker is discarded rather than just stripped as a suffix. The query is
+    collapsed onto one line (and stripped of a trailing semicolon) because the
+    Spider evaluation script reads one query per line."""
+    answer = generated_text[len(prompt):].split(END_OF_TURN)[0]
+    return " ".join(answer.split()).rstrip(";").strip()
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Evaluate the fine-tuned text-to-SQL model on the Spider test set."
+        description="Write the fine-tuned model's SQL predictions for a Spider split, one query per line."
     )
-    parser.add_argument("--model", type=Path, default=DEFAULT_MODEL,
-                        help="Merged model directory to evaluate (default: out/text2sql_qlora, the latest full run).")
-    parser.add_argument("--limit", type=int, default=None, help="Only evaluate the first N test examples.")
-    parser.add_argument("--batch-size", type=int, default=8, help="Generation batch size.")
-    parser.add_argument("--output", type=Path, default=None, help="Optional path to save detailed results as JSON.")
+    parser.add_argument("--split", choices=sorted(SPLIT_FILES), default=DEFAULT_SPLIT, help="Spider split to run.")
+    parser.add_argument("--model", type=Path, default=DEFAULT_MODEL, help="Merged model directory.")
+    parser.add_argument("--output", type=Path, default=None,
+                        help="Predictions file (default: out/eval/pred_<split>_eval_qlora.sql).")
+    parser.add_argument("--limit", type=int, default=None, help="Only run the first N examples.")
+    parser.add_argument("--batch-size", type=int, default=BATCH_SIZE, help="Generation batch size.")
     args = parser.parse_args()
 
-    results = evaluate(model_path=args.model, limit=args.limit, batch_size=args.batch_size)
-    display_results(results)
+    data_json, tables_json = SPLIT_FILES[args.split]
+    samples = json.loads(data_json.read_text(encoding="utf-8"))
+    if args.limit:
+        samples = samples[:args.limit]
+    tables = load_tables(tables_json)
 
-    if args.output:
-        args.output.write_text(json.dumps(results, indent=2))
-        print(f"Saved detailed results to {args.output}")
+    output_path = args.output or default_output_path(args.split)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    print(f"Model:  {args.model.resolve()}")
+    print(f"Split:  {args.split} ({len(samples)} examples)")
+    print(f"Output: {output_path}")
+    pipe, tokenizer, config = load_pipeline(args.model)
+
+    # Prompts are fed to the pipeline as one generator (with batch_size) so
+    # generation is batched on the GPU instead of running example by example.
+    prompts = [build_prompt(sample, tokenizer, tables) for sample in samples]
+    outputs_iter = pipe((p for p in prompts), generation_config=config, batch_size=args.batch_size)
+
+    with output_path.open("w", encoding="utf-8") as f:
+        for count, (prompt, outputs) in enumerate(
+            tqdm(zip(prompts, outputs_iter), total=len(prompts), desc="Generating"), start=1
+        ):
+            # Always write a line, even an empty one, to keep predictions aligned with the gold file.
+            f.write(extract_sql(outputs[0]["generated_text"], prompt) + "\n")
+            if count % FLUSH_EVERY == 0:
+                f.flush()
+                os.fsync(f.fileno())
+
+    print(f"Wrote {len(prompts)} predictions to {output_path}")
 
 
 if __name__ == "__main__":
