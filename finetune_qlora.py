@@ -76,20 +76,24 @@ MODEL_ID = "meta-llama/Llama-3.2-3B-Instruct"
 # whole pipeline can be exercised in a few minutes on a single 16GB GPU. Set to False for a full training run.
 LITE_MODE = False
 
-LITE_TRAIN_SAMPLES = 500
-LITE_EVAL_SAMPLES = 125
+LITE_TRAIN_SAMPLES = 1000
+LITE_EVAL_SAMPLES = 250
 
 # Logging / evaluation cadence. Steps are optimizer steps, i.e. one per
 # BATCH_SIZE x GRADIENT_ACCUMULATION_STEPS samples.
 LOGGING_STEPS = 1 if LITE_MODE else 10
-CHECKPOINT_EVAL_STEPS = 100 if LITE_MODE else 30
+CHECKPOINT_EVAL_STEPS = 4 if LITE_MODE else 30  # lite: ~16 optimizer steps in total, so evaluate about 4 times
 
 # Hyper-parameters - overall
 
 EPOCHS = 1 if LITE_MODE else 3
-BATCH_SIZE = 32 if LITE_MODE else 256  # per device; effective batch = BATCH_SIZE x GRADIENT_ACCUMULATION_STEPS
-MAX_SEQUENCE_LENGTH = 128  # examples longer than this many tokens are dropped from the dataset
-GRADIENT_ACCUMULATION_STEPS = 1
+EFFECTIVE_BATCH_SIZE = 32 if LITE_MODE else 256  # samples per optimizer step
+# Per-device batch, sized for the GPU: lite mode for the 16GB local GPU, full runs for the 24GB
+# HPC GPU. Gradient accumulation makes up the rest of the effective batch, so if there is memory
+# to spare, raise BATCH_SIZE and the accumulation follows.
+BATCH_SIZE = 4 if LITE_MODE else 8
+GRADIENT_ACCUMULATION_STEPS = EFFECTIVE_BATCH_SIZE // BATCH_SIZE
+MAX_SEQUENCE_LENGTH = 512  # examples longer than this many tokens are dropped from the dataset
 
 # Hyper-parameters - QLoRA
 
@@ -391,7 +395,6 @@ def main() -> None:
         max_grad_norm=0.3,
         max_steps=-1,
         warmup_steps=WARMUP_RATIO,              # a float < 1 is a fraction of total optimizer steps
-        group_by_length=True,
         lr_scheduler_type=LR_SCHEDULER_TYPE,    # LR schedule after warmup
         push_to_hub=not LITE_MODE,              # don't push smoke-test runs to the hub
         report_to="wandb",                      # report metrics to W&B
@@ -426,6 +429,14 @@ def main() -> None:
         )
         dropped = before - len(dataset[split])
         print(f"{split}: dropped {dropped}/{before} examples exceeding max_length={train_parameters.max_length} tokens")
+        if not len(dataset[split]):
+            # An empty validation split would otherwise only fail after the first epoch
+            # (no eval_loss for best-model selection); an empty train split is just as fatal.
+            raise ValueError(
+                f"All {before} {split} examples exceed max_length={train_parameters.max_length} tokens. "
+                "Increase MAX_SEQUENCE_LENGTH: every prompt carries the DB schema, so examples "
+                "typically need a few hundred tokens."
+            )
 
         if LITE_MODE:
             cap = lite_split_caps[split]
