@@ -21,40 +21,6 @@ Original file is located at
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""# Fine-Tune Gemma using Hugging Face Transformers and QloRA
-
-<table class="tfo-notebook-buttons" align="left">
-  <td>
-    <a target="_blank" href="https://ai.google.dev/gemma/docs/core/huggingface_text_finetune_qlora"><img src="https://ai.google.dev/static/site-assets/images/docs/notebook-site-button.png" height="32" width="32" />View on ai.google.dev</a>
-  </td>
-  <td>
-    <a target="_blank" href="https://colab.research.google.com/github/google-gemma/cookbook/blob/main/docs/core/huggingface_text_finetune_qlora.ipynb"><img src="https://www.tensorflow.org/images/colab_logo_32px.png" />Run in Google Colab</a>
-  </td>
-  <td>
-    <a target="_blank" href="https://kaggle.com/kernels/welcome?src=https://github.com/google-gemma/cookbook/blob/main/docs/core/huggingface_text_finetune_qlora.ipynb"><img src="https://www.kaggle.com/static/images/logos/kaggle-logo-transparent-300.png" height="32" width="70"/>Run in Kaggle</a>
-  </td>
-  <td>
-    <a target="_blank" href="https://console.cloud.google.com/vertex-ai/colab/import/https%3A%2F%2Fraw.githubusercontent.com%2Fgoogle-gemma%2Fcookbook%2Fmain%2Fdocs%2Fcore%2Fhuggingface_text_finetune_qlora.ipynb"><img src="https://ai.google.dev/images/cloud-icon.svg" width="40" />Open in Vertex AI</a>
-  </td>
-  <td>
-    <a target="_blank" href="https://github.com/google-gemma/cookbook/blob/main/docs/core/huggingface_text_finetune_qlora.ipynb"><img src="https://www.tensorflow.org/images/GitHub-Mark-32px.png" />View source on GitHub</a>
-  </td>
-</table>
-
-## What is Quantized Low-Rank Adaptation (QLoRA)
-
-This guide demonstrates the use of [Quantized Low-Rank Adaptation (QLoRA)](https://arxiv.org/abs/2305.14314), which emerged as a popular method to efficiently fine-tune LLMs as it reduces computational resource requirements while maintaining high performance. In QloRA, the pretrained model is quantized to 4-bit and the weights are frozen. Then trainable adapter layers (LoRA) are attached and only the adapter layers are trained. Afterwards, the adapter weights can be merged with the base model or kept as a separate adapter.
-
-## Setup development environment
-
-The first step is to install Hugging Face Libraries, including TRL, and datasets to fine-tune open model, including different RLHF and alignment techniques.
-"""
-
-"""_Note: If you are using a GPU with Ampere architecture (such as NVIDIA L4) or newer, you can use Flash attention. Flash Attention is a method that significantly speeds computations up and reduces memory usage from quadratic to linear in sequence length, leading to acelerating training up to 3x. Learn more at [FlashAttention](https://github.com/Dao-AILab/flash-attention/tree/main)._
-
-You need a valid Hugging Face Token to publish your model. If you are running inside a Google Colab, you can securely use your Hugging Face Token using the Colab secrets otherwise you can set the token as directly in the `login` method. Make sure your token has write access too, as you push your model to the Hub during training.
-"""
-
 from pathlib import Path
 from typing import Any
 from datetime import datetime
@@ -93,6 +59,7 @@ PROJECT_NAME = "gemma-text-to-sql"
 
 # Hugging Face model id
 MODEL_ID = "google/gemma-4-E2B" # @param ["google/gemma-4-E2B","google/gemma-4-E4B","google/gemma-4-12B","google/gemma-4-31B","google/gemma-4-26B-A4B"] {"allow-input":true}
+PROCESSOR_MODEL_ID = "google/gemma-4-E2B-it"
 
 # Quick local smoke-test switch: trims the dataset and lightens hyperparameters so the
 # whole pipeline can be exercised in a few minutes on a single 16GB GPU. Set to False for a full training run.
@@ -348,7 +315,7 @@ def main() -> None:
 
     # Load model and processor
     model = AutoModelForMultimodalLM.from_pretrained(MODEL_ID, **model_kwargs)
-    processor = AutoProcessor.from_pretrained("google/gemma-4-E2B-it") # Load the Instruction Processor to use the official Gemma template
+    processor = AutoProcessor.from_pretrained(PROCESSOR_MODEL_ID) # Load the Instruction Processor to use the official Gemma template
 
     # NOTE: You should call the prepare_model_for_kbit_training() function to preprocess the quantized model for training.
     # On T4, we are skipping this step purely due to VRAM limitation and for a quick demonstration.
@@ -472,7 +439,6 @@ def main() -> None:
     merged_model = peft_model.merge_and_unload()
     merged_model.save_pretrained(merged_model_dir, safe_serialization=True, max_shard_size="2GB")
 
-    processor = AutoProcessor.from_pretrained("google/gemma-4-E2B-it")
     processor.save_pretrained(merged_model_dir)
     print(f"Merged model saved to {merged_model_dir}")
 
