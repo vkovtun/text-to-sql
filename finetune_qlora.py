@@ -29,7 +29,7 @@ from datasets import Dataset, DatasetDict
 
 import torch
 import wandb
-from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
+from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig, EarlyStoppingCallback
 from peft import prepare_model_for_kbit_training, LoraConfig, PeftModel
 from trl import SFTConfig, SFTTrainer
 
@@ -82,11 +82,11 @@ LITE_EVAL_SAMPLES = 250
 # Logging / evaluation cadence. Steps are optimizer steps, i.e. one per
 # BATCH_SIZE x GRADIENT_ACCUMULATION_STEPS samples.
 LOGGING_STEPS = 1 if LITE_MODE else 10
-CHECKPOINT_EVAL_STEPS = 4 if LITE_MODE else 30  # lite: ~16 optimizer steps in total, so evaluate about 4 times
+CHECKPOINT_EVAL_STEPS = 4 if LITE_MODE else 10  # lite: ~16 optimizer steps in total, so evaluate about 4 times
 
 # Hyper-parameters - overall
 
-EPOCHS = 1 if LITE_MODE else 3
+EPOCHS = 1 if LITE_MODE else 2
 EFFECTIVE_BATCH_SIZE = 32 if LITE_MODE else 64  # samples per optimizer step
 # Per-device batch, sized for the GPU: lite mode for the 16GB local GPU, full runs for the 24GB
 # HPC GPU. Gradient accumulation makes up the rest of the effective batch, so if there is memory
@@ -98,8 +98,10 @@ MAX_SEQUENCE_LENGTH = 512  # examples longer than this many tokens are dropped f
 # Hyper-parameters - QLoRA
 
 QUANT_4_BIT = True  # False loads the model unquantized (plain LoRA)
-LORA_R = 32 if LITE_MODE else 256
-LORA_ALPHA = LORA_R * 2
+LORA_R = 32  # was 256 for full runs: with only ~219k target tokens of supervision, that
+# adapter had ~389M trainable params (12% of the base model) and memorized the 140 train
+# DBs instead of generalizing to the 20 held-out ones; eval_loss bottomed out after ~1 epoch
+LORA_ALPHA = LORA_R  # scaling of 1.0; LORA_R * 2 (scaling 2.0) compounded the capacity issue above
 ATTENTION_LAYERS = ["q_proj", "v_proj", "k_proj", "o_proj"]
 MLP_LAYERS = ["gate_proj", "up_proj", "down_proj"]
 TARGET_MODULES = ATTENTION_LAYERS if LITE_MODE else ATTENTION_LAYERS + MLP_LAYERS
@@ -108,7 +110,8 @@ LORA_DROPOUT = 0.1
 # Hyper-parameters - training
 
 LEARNING_RATE = 1e-4
-WARMUP_RATIO = 0.01  # linear LR warmup, as a fraction of total optimizer steps, followed by the scheduler below
+WARMUP_RATIO = 0.03  # linear LR warmup, as a fraction of total optimizer steps, followed by the scheduler below
+# (0.01 rounded to a single optimizer step on the ~81-step full run, i.e. effectively no warmup)
 LR_SCHEDULER_TYPE = 'cosine'
 WEIGHT_DECAY = 0.001
 OPTIMIZER = "paged_adamw_32bit"
@@ -382,7 +385,7 @@ def main() -> None:
         num_train_epochs=EPOCHS,                # number of training epochs
         per_device_train_batch_size=BATCH_SIZE, # batch size per device during training
         gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS, # effective batch = BATCH_SIZE x this
-        per_device_eval_batch_size=1,           # batch size per device during evaluation
+        per_device_eval_batch_size=8,           # batch size per device during evaluation
         optim=OPTIMIZER,                        # optimizer
         weight_decay=WEIGHT_DECAY,              # weight decay
         logging_steps=LOGGING_STEPS,            # log every N steps
@@ -448,6 +451,10 @@ def main() -> None:
     """You now have every building block you need to create your `SFTTrainer` to start the training of your model."""
 
     # Create Trainer object
+    # Stops the run once eval_loss stops improving, instead of burning the rest of the
+    # cosine schedule after it has already plateaued (see CHECKPOINT_EVAL_STEPS for cadence).
+    callbacks = [] if LITE_MODE else [EarlyStoppingCallback(early_stopping_patience=5)]
+
     trainer = SFTTrainer(
         model=model,
         train_dataset=dataset["train"],
@@ -456,6 +463,7 @@ def main() -> None:
         args=train_parameters,
         processing_class=tokenizer,
         data_collator=collate_fn,
+        callbacks=callbacks,
     )
 
     """Start training by calling the `train()` method."""
