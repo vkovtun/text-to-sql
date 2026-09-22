@@ -86,7 +86,7 @@ CHECKPOINT_EVAL_STEPS = 4 if LITE_MODE else 10  # lite: ~16 optimizer steps in t
 
 # Hyper-parameters - overall
 
-EPOCHS = 1 if LITE_MODE else 2
+EPOCHS = 1 if LITE_MODE else 4
 EFFECTIVE_BATCH_SIZE = 32 if LITE_MODE else 64  # samples per optimizer step
 # Per-device batch, sized for the GPU: lite mode for the 16GB local GPU, full runs for the 24GB
 # HPC GPU. Gradient accumulation makes up the rest of the effective batch, so if there is memory
@@ -101,7 +101,7 @@ QUANT_4_BIT = True  # False loads the model unquantized (plain LoRA)
 LORA_R = 32  # was 256 for full runs: with only ~219k target tokens of supervision, that
 # adapter had ~389M trainable params (12% of the base model) and memorized the 140 train
 # DBs instead of generalizing to the 20 held-out ones; eval_loss bottomed out after ~1 epoch
-LORA_ALPHA = LORA_R  # scaling of 1.0; LORA_R * 2 (scaling 2.0) compounded the capacity issue above
+LORA_ALPHA = LORA_R  # scaling of 1.0
 ATTENTION_LAYERS = ["q_proj", "v_proj", "k_proj", "o_proj"]
 MLP_LAYERS = ["gate_proj", "up_proj", "down_proj"]
 TARGET_MODULES = ATTENTION_LAYERS if LITE_MODE else ATTENTION_LAYERS + MLP_LAYERS
