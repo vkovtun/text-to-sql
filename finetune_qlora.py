@@ -70,7 +70,7 @@ PROJECT_NAME = "llama-text-to-sql"
 #   "meta-llama/Llama-3.2-3B-Instruct"   ~3B  fits a 16GB GPU (current choice)
 #   "meta-llama/Llama-3.1-8B-Instruct"   ~8B  ~24GB GPU, ~16GB CPU RAM to merge
 #   "meta-llama/Llama-3.3-70B-Instruct"  ~70B ~80GB GPU (or several smaller ones), ~140GB CPU RAM to merge
-MODEL_ID = "meta-llama/Llama-3.2-3B-Instruct"
+MODEL_ID = "meta-llama/Llama-3.1-8B-Instruct"
 
 # Quick local smoke-test switch: trims the dataset and lightens hyperparameters so the
 # whole pipeline can be exercised in a few minutes on a single 16GB GPU. Set to False for a full training run.
@@ -298,7 +298,7 @@ def main() -> None:
     login(hf_token, add_to_git_credential=True)
 
     run_name = f"{datetime.now():%Y-%m-%d_%H.%M.%S}-finetune-QLORA" + ("-lite" if LITE_MODE else "")
-    project_run_name = f"{PROJECT_NAME}-{run_name}"
+    project_run_name = f"{PROJECT_NAME}-{run_name}-8B"
 
     # Log in to Weights & Biases
     wandb.login(key=os.environ["WANDB_API_KEY"])

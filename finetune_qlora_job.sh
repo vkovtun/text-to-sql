@@ -3,7 +3,7 @@
 #SBATCH --time=10:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=2
-#SBATCH --mem-per-cpu=8G
+#SBATCH --mem-per-cpu=16G
 #SBATCH --gpus=1
 #SBATCH --gres=gpumem:24G
 #SBATCH --output=spider-improver_%j.out
