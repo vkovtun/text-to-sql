@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 from datetime import datetime
 import json
+import random
 from datasets import Dataset, DatasetDict
 
 import torch
@@ -78,6 +79,12 @@ LITE_MODE = False
 
 LITE_TRAIN_SAMPLES = 1000
 LITE_EVAL_SAMPLES = 250
+
+# Seed for shuffling the train and validation splits right after loading. The JSONL files
+# are ordered by database, so without it the LITE_MODE caps would keep only the first few
+# databases instead of a representative sample. None draws a fresh random seed each run
+# (printed and logged to W&B, so a run can still be reproduced).
+SHUFFLE_SEED = None
 
 # Logging / evaluation cadence. Steps are optimizer steps, i.e. one per
 # BATCH_SIZE x GRADIENT_ACCUMULATION_STEPS samples.
@@ -317,6 +324,10 @@ def main() -> None:
         "train": Dataset.from_list(load_sft_jsonl(TRAIN_JSONL)),
         "validation": Dataset.from_list(load_sft_jsonl(DEV_JSONL)),
     })
+    shuffle_seed = SHUFFLE_SEED if SHUFFLE_SEED is not None else random.randrange(2**32)
+    print(f"Shuffling datasets with seed {shuffle_seed}")
+    wandb.config.update({"shuffle_seed": shuffle_seed})
+    dataset = dataset.shuffle(seed=shuffle_seed)
     print(f"Loaded {len(dataset['train'])} train / {len(dataset['validation'])} validation examples")
 
     # Print the first formatted conversation
