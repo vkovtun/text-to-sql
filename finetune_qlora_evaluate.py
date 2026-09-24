@@ -38,8 +38,10 @@ SPLIT_FILES = {
 }
 DEFAULT_SPLIT = "test"
 
-# Merged (base + adapter) model to run, and where the predictions go.
-DEFAULT_MODEL = Path(__file__).parent / "out" / "text2sql_qlora_euler"
+# Merged (base + adapter) model to run, and where the predictions go. This is the
+# same "latest full run" symlink finetune_qlora.py maintains and finetune_qlora_test.py
+# defaults to; text2sql_qlora_euler/euler_2 are stale pre-Llama (Gemma) merges, not this.
+DEFAULT_MODEL = Path(__file__).parent / "out" / "text2sql_qlora_llama"
 OUTPUT_DIR = Path(__file__).parent / "out" / "eval"
 
 MAX_NEW_TOKENS = 256
@@ -64,6 +66,10 @@ def load_pipeline(model_path: Path):
     config.do_sample = False
     config.eos_token_id = [tokenizer.convert_tokens_to_ids(END_OF_TURN)]
     config.pad_token_id = tokenizer.pad_token_id
+    # Safety net for an undertrained checkpoint that fails to emit <|eot_id|>: without
+    # this, greedy decoding (do_sample=False) can fall into a repeated-n-gram loop that
+    # burns the rest of max_new_tokens instead of trailing off after the real answer.
+    config.no_repeat_ngram_size = 3
 
     pipe = pipeline("text-generation", model=model, tokenizer=tokenizer)
     return pipe, tokenizer, config
@@ -99,7 +105,7 @@ def main() -> None:
     parser.add_argument("--split", choices=sorted(SPLIT_FILES), default=DEFAULT_SPLIT, help="Spider split to run.")
     parser.add_argument("--model", type=Path, default=DEFAULT_MODEL, help="Merged model directory.")
     parser.add_argument("--output", type=Path, default=None,
-                        help="Predictions file (default: out/eval/pred_<split>_eval_qlora.sql).")
+                        help="Predictions file (default: out/eval/pred_<split>_qlora_eval.sql).")
     parser.add_argument("--limit", type=int, default=None, help="Only run the first N examples.")
     parser.add_argument("--batch-size", type=int, default=BATCH_SIZE, help="Generation batch size.")
     args = parser.parse_args()
