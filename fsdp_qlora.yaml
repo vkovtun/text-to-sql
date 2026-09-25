@@ -1,0 +1,25 @@
+# accelerate config for finetune_qlora_fsdp.py: FSDP over all GPUs of one node.
+# num_processes is overridden on the command line with the actual GPU count.
+compute_environment: LOCAL_MACHINE
+distributed_type: FSDP
+downcast_bf16: 'no'
+fsdp_config:
+  fsdp_auto_wrap_policy: TRANSFORMER_BASED_WRAP   # one FSDP unit per decoder layer
+  fsdp_backward_prefetch: BACKWARD_PRE
+  fsdp_cpu_ram_efficient_loading: true            # only rank 0 reads the weights from disk
+  fsdp_forward_prefetch: false
+  # 70B in 4-bit is ~37GB, i.e. ~9GB per GPU on 4 GPUs. On only 2 x 24GB GPUs set this to
+  # true: parameters then live in CPU RAM between uses, which fits but is much slower.
+  fsdp_offload_params: false
+  fsdp_sharding_strategy: FULL_SHARD
+  fsdp_state_dict_type: SHARDED_STATE_DICT        # checkpoints saved per rank, no full gather
+  fsdp_sync_module_states: true
+  fsdp_use_orig_params: false
+machine_rank: 0
+main_training_function: main
+mixed_precision: 'no'   # precision is set by the bf16/fp16 training arguments in the script
+num_machines: 1
+num_processes: 4
+rdzv_backend: static
+same_network: true
+use_cpu: false
