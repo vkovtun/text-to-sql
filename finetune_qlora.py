@@ -71,7 +71,7 @@ PROJECT_NAME = "llama-text-to-sql"
 #   "meta-llama/Llama-3.2-3B-Instruct"   ~3B  fits a 16GB GPU (current choice)
 #   "meta-llama/Llama-3.1-8B-Instruct"   ~8B  ~24GB GPU, ~16GB CPU RAM to merge
 #   "meta-llama/Llama-3.3-70B-Instruct"  ~70B ~80GB GPU (or several smaller ones), ~140GB CPU RAM to merge
-MODEL_ID = "meta-llama/Llama-3.1-8B-Instruct"
+MODEL_ID = "meta-llama/CodeLlama-13b-Instruct-hf"
 
 # Quick local smoke-test switch: trims the dataset and lightens hyperparameters so the
 # whole pipeline can be exercised in a few minutes on a single 16GB GPU. Set to False for a full training run.
@@ -93,7 +93,7 @@ CHECKPOINT_EVAL_STEPS = 4 if LITE_MODE else 10  # lite: ~16 optimizer steps in t
 
 # Hyper-parameters - overall
 
-EPOCHS = 1 if LITE_MODE else 4
+EPOCHS = 1 if LITE_MODE else 6
 EFFECTIVE_BATCH_SIZE = 16 if LITE_MODE else 32  # samples per optimizer step
 # Per-device batch, sized for the GPU: lite mode for the 16GB local GPU, full runs for the 24GB
 # HPC GPU. Gradient accumulation makes up the rest of the effective batch, so if there is memory
