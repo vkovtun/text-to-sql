@@ -55,10 +55,10 @@ OUTPUT_DIR = Path(__file__).parent / "out"
 MERGED_SUBDIR = "merged"
 # Stable symlink to the merged model of the most recent full (non-lite) run. The
 # test and evaluate scripts load from here by default.
-LATEST_MODEL_LINK = OUTPUT_DIR / "text2sql_qlora_llama"
+LATEST_MODEL_LINK = OUTPUT_DIR / "text2sql_qlora_qwen"
 
 # Run identity, shared between the Hub repo name and the W&B run
-PROJECT_NAME = "llama-text-to-sql"
+PROJECT_NAME = "qwen-text-to-sql"
 
 # Hugging Face model id. The Instruct model provides both the weights and the tokenizer /
 # official chat template (the Llama 3 base models have untrained embeddings for the chat
@@ -369,9 +369,9 @@ def main() -> None:
     for message in conversation(dataset["train"][0]):
         print(message)
 
-    """## Fine-tune Llama using TRL and the SFTTrainer
+    """## Fine-tune the model using TRL and the SFTTrainer
 
-    The following code loads the Llama model and tokenizer from Hugging Face and initializes the quantization configuration.
+    The following code loads the model and tokenizer from Hugging Face and initializes the quantization configuration.
     """
 
     # Check if GPU supports bfloat16
@@ -403,7 +403,7 @@ def main() -> None:
 
     model_kwargs["quantization_config"] = quant_config
 
-    # Load model and tokenizer (the Instruct repo carries the official Llama chat template).
+    # Load model and tokenizer (the Instruct repo carries the official chat template).
     # Right padding for training; the tokenizer is saved next to the merged model.
     model = AutoModelForCausalLM.from_pretrained(MODEL_ID, **model_kwargs)
     tokenizer = configure_tokenizer(AutoTokenizer.from_pretrained(MODEL_ID), padding_side="right")
