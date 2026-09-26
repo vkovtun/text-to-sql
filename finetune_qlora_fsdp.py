@@ -155,6 +155,10 @@ def main() -> None:
         # checkpointing is the variant that works with FSDP + QLoRA.
         gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": True},
+        # TRL's default "chunked_nll" makes an fp32 copy of the whole lm_head per chunk
+        # (128k vocab x 8192 x 4 bytes = ~4GB for 70B), more than the plain loss's logits
+        # take at this batch size; it ran out of memory there on 24GB GPUs.
+        loss_type="nll",
         optim=OPTIMIZER,
         weight_decay=base.WEIGHT_DECAY,
         logging_steps=base.LOGGING_STEPS,

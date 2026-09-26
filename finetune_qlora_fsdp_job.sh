@@ -102,6 +102,9 @@ snapshot_download('$MODEL_ID', allow_patterns=['*.json', '*.safetensors', 'token
 "
 
 NUM_GPUS=$(nvidia-smi -L | wc -l)
+# The GPUs run close to full; this lets PyTorch reuse fragmented free memory.
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
 # torchrun defaults each process to 1 CPU thread; quantizing on the CPU needs more.
 export OMP_NUM_THREADS=$(( SLURM_CPUS_PER_TASK / NUM_GPUS ))
 echo "Launching on $NUM_GPUS GPUs, $OMP_NUM_THREADS CPU threads each"
