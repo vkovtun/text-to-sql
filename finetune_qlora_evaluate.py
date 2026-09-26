@@ -15,6 +15,7 @@ Usage:
     python finetune_qlora_evaluate.py --split dev
     python finetune_qlora_evaluate.py --limit 20             # quick check
     python finetune_qlora_evaluate.py --model out/<run dir>/merged --output out/eval/other.sql
+    python finetune_qlora_evaluate.py --model meta-llama/Llama-3.1-8B-Instruct  # untuned baseline from the Hub
 """
 import argparse
 import json
@@ -22,6 +23,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
 from tqdm.auto import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig, pipeline
 
@@ -41,7 +43,7 @@ DEFAULT_SPLIT = "test"
 # Merged (base + adapter) model to run, and where the predictions go. This is the
 # same "latest full run" symlink finetune_qlora.py maintains and finetune_qlora_test.py
 # defaults to; text2sql_qlora_euler/euler_2 are stale pre-Llama (Gemma) merges, not this.
-DEFAULT_MODEL = Path(__file__).parent / "out" / "text2sql_qlora_llama"
+DEFAULT_MODEL = Path(__file__).parent / "out" / "text2sql"
 OUTPUT_DIR = Path(__file__).parent / "out" / "eval"
 
 MAX_NEW_TOKENS = 256
@@ -93,8 +95,16 @@ def extract_sql(generated_text: str) -> str:
     (end of turn, padding) are dropped when decoding. Splitting on the marker is
     a safeguard in case it is ever kept. The query is collapsed onto one line
     (and stripped of a trailing semicolon) because the Spider evaluation script
-    reads one query per line."""
+    reads one query per line.
+
+    An untuned Instruct model (the baseline) often wraps its answer in a
+    ```sql ... ``` fence; the fenced body is kept so it is scored on the SQL, not
+    the formatting. The fine-tuned model answers bare SQL, so this is a no-op there."""
     answer = generated_text.split(END_OF_TURN)[0]
+    if "```" in answer:
+        answer = answer.split("```")[1]
+        if answer[:3].lower() == "sql":
+            answer = answer[3:]
     return " ".join(answer.split()).rstrip(";").strip()
 
 
@@ -103,12 +113,16 @@ def main() -> None:
         description="Write the fine-tuned model's SQL predictions for a Spider split, one query per line."
     )
     parser.add_argument("--split", choices=sorted(SPLIT_FILES), default=DEFAULT_SPLIT, help="Spider split to run.")
-    parser.add_argument("--model", type=Path, default=DEFAULT_MODEL, help="Merged model directory.")
+    parser.add_argument("--model", type=Path, default=DEFAULT_MODEL,
+                        help="Merged model directory or Hugging Face model id "
+                             "(e.g. meta-llama/Llama-3.1-8B-Instruct for the untuned baseline).")
     parser.add_argument("--output", type=Path, default=None,
                         help="Predictions file (default: out/eval/pred_<split>_qlora_eval.sql).")
     parser.add_argument("--limit", type=int, default=None, help="Only run the first N examples.")
     parser.add_argument("--batch-size", type=int, default=BATCH_SIZE, help="Generation batch size.")
     args = parser.parse_args()
+    # HF_TOKEN from .env, needed to download gated Hub models such as the Llama base
+    load_dotenv()
 
     data_json, tables_json = SPLIT_FILES[args.split]
     samples = json.loads(data_json.read_text(encoding="utf-8"))
@@ -119,7 +133,7 @@ def main() -> None:
     output_path = args.output or default_output_path(args.split)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    print(f"Model:  {args.model.resolve()}")
+    print(f"Model:  {args.model.resolve() if args.model.exists() else args.model}")
     print(f"Split:  {args.split} ({len(samples)} examples)")
     print(f"Output: {output_path}")
     pipe, tokenizer, config = load_pipeline(args.model)
