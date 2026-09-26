@@ -2,11 +2,11 @@
 #SBATCH --job-name=spider-improver-fsdp
 #SBATCH --time=24:00:00
 #SBATCH --ntasks=1
-# One CPU per GPU process plus spare for data loading. CPU RAM must hold the 70B checkpoint
-# while rank 0 loads it and, for the adapter merge at the end, the bf16 model (~140GB):
-# 8 x 24G = 192G. Lower it and set MERGE_ADAPTER = False in the script if the queue limits it.
-#SBATCH --cpus-per-task=8
-#SBATCH --mem-per-cpu=24G
+# Every GPU process quantizes the model on the CPU and holds its 4-bit copy (~37GB for 70B)
+# in CPU RAM until FSDP moves the shards to the GPUs: ~150GB for 4 GPUs, plus headroom while
+# loading. The adapter merge at the end needs the bf16 model (~140GB). 16 x 16G = 256G.
+#SBATCH --cpus-per-task=16
+#SBATCH --mem-per-cpu=16G
 #SBATCH --gpus=4
 #SBATCH --gres=gpumem:24G
 #SBATCH --output=spider-improver-fsdp_%j.out
@@ -102,7 +102,9 @@ snapshot_download('$MODEL_ID', allow_patterns=['*.json', '*.safetensors', 'token
 "
 
 NUM_GPUS=$(nvidia-smi -L | wc -l)
-echo "Launching on $NUM_GPUS GPUs"
+# torchrun defaults each process to 1 CPU thread; quantizing on the CPU needs more.
+export OMP_NUM_THREADS=$(( SLURM_CPUS_PER_TASK / NUM_GPUS ))
+echo "Launching on $NUM_GPUS GPUs, $OMP_NUM_THREADS CPU threads each"
 accelerate launch --config_file fsdp_qlora.yaml --num_processes "$NUM_GPUS" finetune_qlora_fsdp.py
 
 echo ""

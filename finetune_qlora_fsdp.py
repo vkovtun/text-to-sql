@@ -117,10 +117,12 @@ def main() -> None:
         bnb_4bit_quant_storage=torch_dtype,
     )
 
-    # No device_map: FSDP places the shards. With fsdp_cpu_ram_efficient_loading (see
-    # fsdp_qlora.yaml) only rank 0 reads the weights; the others start on the meta device.
+    # Quantize into CPU RAM; FSDP then moves one shard to each GPU when training starts.
+    # Without an explicit device_map, transformers 5 puts a 4-bit model on the current GPU,
+    # so every rank would try to fit the whole model (~37GB for 70B) on its own GPU. Every
+    # rank loads its own copy: transformers' rank-0-only loading skips quantized models.
     model = AutoModelForCausalLM.from_pretrained(
-        MODEL_ID, dtype=torch_dtype, quantization_config=quant_config, low_cpu_mem_usage=True
+        MODEL_ID, dtype=torch_dtype, quantization_config=quant_config, device_map={"": "cpu"}
     )
     tokenizer = configure_tokenizer(AutoTokenizer.from_pretrained(MODEL_ID), padding_side="right")
 

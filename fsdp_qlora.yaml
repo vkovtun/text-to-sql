@@ -6,7 +6,9 @@ downcast_bf16: 'no'
 fsdp_config:
   fsdp_auto_wrap_policy: TRANSFORMER_BASED_WRAP   # one FSDP unit per decoder layer
   fsdp_backward_prefetch: BACKWARD_PRE
-  fsdp_cpu_ram_efficient_loading: true            # only rank 0 reads the weights from disk
+  # Rank-0-only loading, which transformers does not support for quantized models: every
+  # rank quantizes its own copy into CPU RAM (see finetune_qlora_fsdp.py).
+  fsdp_cpu_ram_efficient_loading: false
   fsdp_forward_prefetch: false
   # 70B in 4-bit is ~37GB, i.e. ~9GB per GPU on 4 GPUs. On only 2 x 24GB GPUs set this to
   # true: parameters then live in CPU RAM between uses, which fits but is much slower.
