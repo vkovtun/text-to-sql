@@ -123,6 +123,40 @@ LR_SCHEDULER_TYPE = 'cosine'
 WEIGHT_DECAY = 0.001
 OPTIMIZER = "paged_adamw_32bit"
 SAVE_STRATEGY = "no" if LITE_MODE else "best"
+EARLY_STOPPING_PATIENCE = 5  # evaluations without eval_loss improvement before stopping (full runs only)
+
+
+def script_hyperparameters() -> dict[str, Any]:
+    """The script-level settings, for the W&B run config. The Trainer's W&B
+    callback logs the SFTConfig, model config and PEFT config on its own, but
+    not these (e.g. LITE_MODE and its caps, or the effective batch size)."""
+    return {
+        "model_id": MODEL_ID,
+        "lite_mode": LITE_MODE,
+        "lite_train_samples": LITE_TRAIN_SAMPLES if LITE_MODE else None,
+        "lite_eval_samples": LITE_EVAL_SAMPLES if LITE_MODE else None,
+        "train_jsonl": TRAIN_JSONL.name,
+        "dev_jsonl": DEV_JSONL.name,
+        "epochs": EPOCHS,
+        "effective_batch_size": EFFECTIVE_BATCH_SIZE,
+        "batch_size": BATCH_SIZE,
+        "gradient_accumulation_steps": GRADIENT_ACCUMULATION_STEPS,
+        "max_sequence_length": MAX_SEQUENCE_LENGTH,
+        "quant_4_bit": QUANT_4_BIT,
+        "lora_r": LORA_R,
+        "lora_alpha": LORA_ALPHA,
+        "lora_dropout": LORA_DROPOUT,
+        "target_modules": TARGET_MODULES,
+        "learning_rate": LEARNING_RATE,
+        "warmup_ratio": WARMUP_RATIO,
+        "lr_scheduler_type": LR_SCHEDULER_TYPE,
+        "weight_decay": WEIGHT_DECAY,
+        "optimizer": OPTIMIZER,
+        "save_strategy": SAVE_STRATEGY,
+        "logging_steps": LOGGING_STEPS,
+        "checkpoint_eval_steps": CHECKPOINT_EVAL_STEPS,
+        "early_stopping_patience": None if LITE_MODE else EARLY_STOPPING_PATIENCE,
+    }
 
 """## Load the fine-tuning dataset
 
@@ -317,7 +351,7 @@ def main() -> None:
     os.environ["WANDB_LOG_MODEL"] = "false"
     os.environ["WANDB_WATCH"] = "false"
 
-    wandb.init(project=PROJECT_NAME, name=run_name)
+    wandb.init(project=PROJECT_NAME, name=run_name, config=script_hyperparameters())
 
     # Load the dataset
     dataset = DatasetDict({
@@ -375,7 +409,8 @@ def main() -> None:
 
     # NOTE: You should call the prepare_model_for_kbit_training() function to preprocess the quantized model for training.
     # On T4, we are skipping this step purely due to VRAM limitation and for a quick demonstration.
-    if QUANT_4_BIT and (torch.cuda.get_device_properties(0).total_memory/1024**3) > 16:
+    kbit_prepared = QUANT_4_BIT and (torch.cuda.get_device_properties(0).total_memory/1024**3) > 16
+    if kbit_prepared:
         model = prepare_model_for_kbit_training(model)
 
     """The `SFTTrainer` supports a built-in integration with `peft`, which makes it straightforward to efficiently tune LLMs using QLoRA. You only need to create a `LoraConfig` and provide it to the trainer."""
@@ -388,6 +423,15 @@ def main() -> None:
         task_type="CAUSAL_LM",
         target_modules=TARGET_MODULES,
     )
+
+    # Log the resolved model-side settings: the dtype and k-bit preparation depend on the
+    # GPU, and the quantization/LoRA configs carry fields not set via module constants
+    wandb.config.update({
+        "torch_dtype": str(torch_dtype).removeprefix("torch."),
+        "prepare_model_for_kbit_training": kbit_prepared,
+        "quantization": quant_config.to_dict(),
+        "lora": lora_config.to_dict(),
+    })
 
     """Before you can start your training, you need to define the hyperparameter you want to use in a `SFTConfig` instance."""
 
@@ -457,6 +501,12 @@ def main() -> None:
             dataset[split] = dataset[split].select(range(min(cap, len(dataset[split]))))
             print(f"LITE_MODE: trimmed {split} to {len(dataset[split])} examples (post-filter)")
 
+        wandb.config.update({
+            f"{split}_examples_loaded": before,
+            f"{split}_examples_dropped_too_long": dropped,
+            f"{split}_examples_used": len(dataset[split]),
+        })
+
     collate_fn = build_collate_fn(tokenizer, train_parameters.max_length)
 
     """You now have every building block you need to create your `SFTTrainer` to start the training of your model."""
@@ -464,7 +514,7 @@ def main() -> None:
     # Create Trainer object
     # Stops the run once eval_loss stops improving, instead of burning the rest of the
     # cosine schedule after it has already plateaued (see CHECKPOINT_EVAL_STEPS for cadence).
-    callbacks = [] if LITE_MODE else [EarlyStoppingCallback(early_stopping_patience=5)]
+    callbacks = [] if LITE_MODE else [EarlyStoppingCallback(early_stopping_patience=EARLY_STOPPING_PATIENCE)]
 
     trainer = SFTTrainer(
         model=model,
