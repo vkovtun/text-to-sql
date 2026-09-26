@@ -71,7 +71,8 @@ PROJECT_NAME = "llama-text-to-sql"
 #   "meta-llama/Llama-3.2-3B-Instruct"   ~3B  fits a 16GB GPU (current choice)
 #   "meta-llama/Llama-3.1-8B-Instruct"   ~8B  ~24GB GPU, ~16GB CPU RAM to merge
 #   "meta-llama/Llama-3.3-70B-Instruct"  ~70B ~80GB GPU (or several smaller ones), ~140GB CPU RAM to merge
-MODEL_ID = "meta-llama/CodeLlama-13b-Instruct-hf"
+#   "meta-llama/CodeLlama-13b-Instruct-hf"
+MODEL_ID = "Qwen/Qwen2.5-7B-Instruct"
 
 # Quick local smoke-test switch: trims the dataset and lightens hyperparameters so the
 # whole pipeline can be exercised in a few minutes on a single 16GB GPU. Set to False for a full training run.
@@ -452,7 +453,7 @@ def main() -> None:
         bf16=True if torch_dtype == torch.bfloat16 else False, # use bfloat16 precision
         max_grad_norm=0.3,
         max_steps=-1,
-        warmup_steps=WARMUP_RATIO,              # a float < 1 is a fraction of total optimizer steps
+        warmup_steps=20,              
         lr_scheduler_type=LR_SCHEDULER_TYPE,    # LR schedule after warmup
         push_to_hub=not LITE_MODE,              # don't push smoke-test runs to the hub
         report_to="wandb",                      # report metrics to W&B
