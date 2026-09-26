@@ -95,7 +95,7 @@ CHECKPOINT_EVAL_STEPS = 4 if LITE_MODE else 10  # lite: ~16 optimizer steps in t
 # Hyper-parameters - overall
 
 EPOCHS = 1 if LITE_MODE else 6
-EFFECTIVE_BATCH_SIZE = 16 if LITE_MODE else 32  # samples per optimizer step
+EFFECTIVE_BATCH_SIZE = 32 if LITE_MODE else 64  # samples per optimizer step
 # Per-device batch, sized for the GPU: lite mode for the 16GB local GPU, full runs for the 24GB
 # HPC GPU. Gradient accumulation makes up the rest of the effective batch, so if there is memory
 # to spare, raise BATCH_SIZE and the accumulation follows.
