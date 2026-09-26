@@ -72,7 +72,8 @@ PROJECT_NAME = "qwen-text-to-sql"
 #   "meta-llama/Llama-3.1-8B-Instruct"   ~8B  ~24GB GPU, ~16GB CPU RAM to merge
 #   "meta-llama/Llama-3.3-70B-Instruct"  ~70B ~80GB GPU (or several smaller ones), ~140GB CPU RAM to merge
 #   "meta-llama/CodeLlama-13b-Instruct-hf"
-MODEL_ID = "Qwen/Qwen2.5-7B-Instruct"
+MODEL_ID = "Qwen/Qwen2.5-14B-Instruct"
+MODEL_BARE_ID = MODEL_ID.split(sep="/")[1]
 
 # Quick local smoke-test switch: trims the dataset and lightens hyperparameters so the
 # whole pipeline can be exercised in a few minutes on a single 16GB GPU. Set to False for a full training run.
@@ -339,8 +340,8 @@ def main() -> None:
     hf_token = os.environ["HF_TOKEN"]
     login(hf_token, add_to_git_credential=True)
 
-    run_name = f"{datetime.now():%Y-%m-%d_%H.%M.%S}-finetune-QLORA" + ("-lite" if LITE_MODE else "")
-    project_run_name = f"{PROJECT_NAME}-{run_name}-8B"
+    run_name = f"{datetime.now():%Y-%m-%d_%H.%M.%S}-{MODEL_BARE_ID}-finetune-QLORA" + ("-lite" if LITE_MODE else "")
+    project_run_name = f"{PROJECT_NAME}-{run_name}"
 
     # Log in to Weights & Biases
     wandb.login(key=os.environ["WANDB_API_KEY"])
